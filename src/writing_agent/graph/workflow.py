@@ -19,6 +19,18 @@ from writing_agent.graph.state import WritingState
 from writing_agent.models import WritingRequest
 
 
+def _route_after_outline(state: WritingState) -> str:
+    if state.get("pause_after_outline"):
+        return "__end__"
+    return "write_sections"
+
+
+def _route_after_assemble(state: WritingState) -> str:
+    if state.get("pause_before_export"):
+        return "__end__"
+    return "export_document"
+
+
 def _build_sqlite_checkpointer(settings: Settings) -> object:
     settings.checkpoint_db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(settings.checkpoint_db_path, check_same_thread=False)
@@ -58,11 +70,19 @@ def build_workflow(
     builder.add_edge(START, "parse_request")
     builder.add_edge("parse_request", "load_sources")
     builder.add_edge("load_sources", "plan_outline")
-    builder.add_edge("plan_outline", "write_sections")
+    builder.add_conditional_edges(
+        "plan_outline",
+        _route_after_outline,
+        {"write_sections": "write_sections", "__end__": END},
+    )
     builder.add_edge("write_sections", "review_document")
     builder.add_edge("review_document", "revise_document")
     builder.add_edge("revise_document", "assemble_document")
-    builder.add_edge("assemble_document", "export_document")
+    builder.add_conditional_edges(
+        "assemble_document",
+        _route_after_assemble,
+        {"export_document": "export_document", "__end__": END},
+    )
     builder.add_edge("export_document", END)
 
     if checkpointer is False:

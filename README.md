@@ -143,6 +143,16 @@ writing-agent run \
 The workflow writes a timestamped file to `OUTPUT_DIR`, which defaults to
 `./outputs`.
 
+Human review entry points:
+
+```bash
+writing-agent run --topic "..." --pause-after-outline
+writing-agent run --topic "..." --pause-before-export
+```
+
+These flags stop the graph at the outline or assembled final-draft stage and set
+`awaiting_human_review=true` in the returned state.
+
 Supported source file types:
 
 - `.md`
@@ -170,10 +180,9 @@ That path exercises the graph without calling a real LLM.
 
 ## Human Review
 
-The state model already includes `awaiting_human_review`, and the workflow is
-organized around natural pause points after outline planning and before final
-export. The current implementation does not yet expose an interactive review
-command; this is reserved for the next iteration.
+The graph supports pause points after outline planning and after final draft
+assembly. The current CLI exposes those pause points, while an interactive edit
+and resume command is reserved for the next iteration.
 
 ## Roadmap
 
@@ -184,4 +193,3 @@ command; this is reserved for the next iteration.
 - Multi-agent collaboration for planning, drafting, review, and editing roles.
 - LangSmith tracing for debugging long workflows.
 - Evaluation sets and automatic scoring for structure, faithfulness, and style.
-

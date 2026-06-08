@@ -213,18 +213,29 @@ def plan_outline_node(state: WritingState) -> WritingState:
 
     request = _request_from_state(state)
     notes = _source_notes_from_state(state)
+    awaiting_review = bool(state.get("pause_after_outline", False))
     if not _use_llm(state):
-        return {"plan": _fallback_plan(request, notes), "current_step": "plan_outline"}
+        return {
+            "plan": _fallback_plan(request, notes),
+            "current_step": "plan_outline",
+            "awaiting_human_review": awaiting_review,
+        }
 
     messages = build_planner_prompt(_request_summary(request), _source_summary(notes))
     try:
         plan = _invoke_json(messages, WritingPlan)
-        return {"plan": plan, "current_step": "plan_outline", "errors": _errors(state)}
+        return {
+            "plan": plan,
+            "current_step": "plan_outline",
+            "errors": _errors(state),
+            "awaiting_human_review": awaiting_review,
+        }
     except Exception as exc:
         return {
             "plan": _fallback_plan(request, notes),
             "current_step": "plan_outline",
             "errors": [*_errors(state), str(exc)],
+            "awaiting_human_review": awaiting_review,
         }
 
 
@@ -383,7 +394,12 @@ def assemble_document_node(state: WritingState) -> WritingState:
             "review_findings": [finding.model_dump(mode="json") for finding in findings],
         },
     )
-    return {"final_document": final, "current_step": "assemble_document", "errors": _errors(state)}
+    return {
+        "final_document": final,
+        "current_step": "assemble_document",
+        "errors": _errors(state),
+        "awaiting_human_review": bool(state.get("pause_before_export", False)),
+    }
 
 
 def export_document_node(state: WritingState) -> WritingState:

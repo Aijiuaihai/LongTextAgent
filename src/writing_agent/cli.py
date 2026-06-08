@@ -62,6 +62,14 @@ def run(
         str,
         typer.Option("--output-format", help="markdown or docx."),
     ] = "markdown",
+    pause_after_outline: Annotated[
+        bool,
+        typer.Option("--pause-after-outline", help="Pause after outline planning."),
+    ] = False,
+    pause_before_export: Annotated[
+        bool,
+        typer.Option("--pause-before-export", help="Pause after final draft assembly."),
+    ] = False,
 ) -> None:
     """Run the long-form writing workflow."""
 
@@ -80,12 +88,17 @@ def run(
             "request": request,
             "output_format": output_format,
             "output_dir": str(settings.output_dir),
+            "pause_after_outline": pause_after_outline,
+            "pause_before_export": pause_before_export,
         },
         settings=settings,
     )
     for error in result.get("errors", []):
         console.print(f"[yellow]Warning:[/yellow] {error}")
-    console.print(f"[green]Exported:[/green] {result.get('output_path')}")
+    if result.get("awaiting_human_review"):
+        console.print(f"[yellow]Paused for human review at:[/yellow] {result.get('current_step')}")
+    else:
+        console.print(f"[green]Exported:[/green] {result.get('output_path')}")
 
 
 @app.command("init-example")

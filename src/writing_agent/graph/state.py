@@ -26,6 +26,8 @@ class WritingState(TypedDict, total=False):
     output_format: str
     output_dir: str
     use_llm: bool
+    pause_after_outline: bool
+    pause_before_export: bool
     awaiting_human_review: bool
     current_step: str
     errors: list[str]
