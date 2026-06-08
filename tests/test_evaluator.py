@@ -30,3 +30,4 @@ def test_evaluate_text_reports_quality_metrics() -> None:
     assert result["has_references"] is True
     assert result["insufficient_evidence_count"] == 1
     assert result["risk_terms"]["形成闭环"] == 1
+

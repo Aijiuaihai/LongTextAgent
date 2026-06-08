@@ -15,6 +15,7 @@ from rich.table import Table
 from writing_agent.checkpoints import inspect_thread, list_threads
 from writing_agent.config import get_settings
 from writing_agent.evaluation.evaluator import evaluate_markdown
+from writing_agent.evaluation.llm_judge import judge_document_with_llm
 from writing_agent.graph.workflow import (
     generate_thread_id,
     resume_writing_workflow,
@@ -340,10 +341,17 @@ def evaluate(
         bool,
         typer.Option("--json", help="Print JSON instead of a Rich table."),
     ] = False,
+    llm_judge: Annotated[
+        bool,
+        typer.Option("--llm-judge", help="Also run optional LLM judge evaluation."),
+    ] = False,
 ) -> None:
     """Evaluate a generated markdown document with rule-based metrics."""
 
-    result = evaluate_markdown(file)
+    rule_metrics = evaluate_markdown(file)
+    result = {"rule_metrics": rule_metrics}
+    if llm_judge:
+        result["llm_judge"] = judge_document_with_llm(file, settings=get_settings())
     if json_output:
         console.print(json.dumps(result, ensure_ascii=False, indent=2))
         return
@@ -351,10 +359,13 @@ def evaluate(
     table = Table(title=f"Evaluation: {file}")
     table.add_column("Metric")
     table.add_column("Value")
-    for key, value in result.items():
+    for key, value in rule_metrics.items():
         rendered = json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else str(value)
         table.add_row(key, rendered)
     console.print(table)
+    if llm_judge:
+        console.print("[bold]LLM Judge[/bold]")
+        console.print(result["llm_judge"])
 
 
 @app.command("init-example")
