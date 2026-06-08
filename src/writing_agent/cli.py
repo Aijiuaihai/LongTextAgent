@@ -36,6 +36,7 @@ from writing_agent.rag.collections import (
     list_collections,
     rebuild_collection,
 )
+from writing_agent.rag.diff import diff_collections, diff_manifests, summarize_manifest_diff
 from writing_agent.rag.retriever import VectorRetriever
 from writing_agent.rag.vector_index import (
     add_documents_to_index,
@@ -359,6 +360,74 @@ def collections_export_manifest(
 
     path = export_collection_manifest(collection, output, get_settings())
     console.print(f"[green]Exported manifest:[/green] {path}")
+
+
+@collections_app.command("diff")
+def collections_diff(
+    old_manifest: Annotated[
+        Path | None,
+        typer.Option("--old-manifest", help="Old manifest JSON path."),
+    ] = None,
+    new_manifest: Annotated[
+        Path | None,
+        typer.Option("--new-manifest", help="New manifest JSON path."),
+    ] = None,
+    old_collection: Annotated[
+        str | None,
+        typer.Option("--old-collection", help="Old collection name."),
+    ] = None,
+    new_collection: Annotated[
+        str | None,
+        typer.Option("--new-collection", help="New collection name."),
+    ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print JSON output."),
+    ] = False,
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", help="Optional JSON report path."),
+    ] = None,
+) -> None:
+    """Compare two index manifests or two persisted collections."""
+
+    if old_manifest and new_manifest:
+        diff_result = diff_manifests(old_manifest, new_manifest)
+    elif old_collection and new_collection:
+        diff_result = diff_collections(old_collection, new_collection, get_settings())
+    else:
+        console.print(
+            "[red]Provide either --old-manifest/--new-manifest "
+            "or --old-collection/--new-collection.[/red]"
+        )
+        raise typer.Exit(code=1)
+    payload = diff_result.model_dump(mode="json")
+    payload["summary"] = summarize_manifest_diff(diff_result)
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        console.print(f"[green]Wrote diff report:[/green] {output}")
+    if json_output:
+        console.print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    table = Table(title="Collection Diff")
+    table.add_column("metric")
+    table.add_column("value")
+    summary = payload["summary"]
+    for key in [
+        "old_collection",
+        "new_collection",
+        "source_added",
+        "source_removed",
+        "source_changed",
+        "chunk_added",
+        "chunk_removed",
+        "chunk_changed",
+    ]:
+        table.add_row(key, str(summary[key]))
+    console.print(table)
+    for warning in summary["warnings"]:
+        console.print(f"[yellow]Warning:[/yellow] {warning}")
 
 
 def _load_review_file(path: Path) -> object:
