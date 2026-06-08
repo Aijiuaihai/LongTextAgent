@@ -23,6 +23,8 @@ class WritingState(TypedDict, total=False):
     review_findings: list[ReviewFinding] | list[dict[str, str]]
     final_document: FinalDocument | dict[str, Any]
     output_path: str
+    output_format: str
+    output_dir: str
     use_llm: bool
     awaiting_human_review: bool
     current_step: str

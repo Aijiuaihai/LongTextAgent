@@ -21,7 +21,7 @@ from writing_agent.prompts.planner import build_planner_prompt
 from writing_agent.prompts.reviewer import build_reviewer_prompt
 from writing_agent.prompts.writer import build_writer_prompt
 from writing_agent.tools.document_loader import load_sources
-from writing_agent.tools.export import export_markdown
+from writing_agent.tools.export import export_docx, export_markdown
 
 
 def _errors(state: WritingState) -> list[str]:
@@ -391,8 +391,15 @@ def export_document_node(state: WritingState) -> WritingState:
 
     value = state["final_document"]
     final = value if isinstance(value, FinalDocument) else FinalDocument.model_validate(value)
+    output_dir = state.get("output_dir", "./outputs")
+    output_format = state.get("output_format", "markdown")
     try:
-        path = export_markdown(final.markdown, title=final.title)
+        if output_format == "markdown":
+            path = export_markdown(final.markdown, output_dir=output_dir, title=final.title)
+        elif output_format == "docx":
+            path = export_docx(final.markdown, output_dir=output_dir, title=final.title)
+        else:
+            raise ValueError(f"Unsupported output format: {output_format}")
         return {
             "output_path": str(path),
             "current_step": "export_document",
