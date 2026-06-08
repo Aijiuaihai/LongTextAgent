@@ -1,13 +1,13 @@
 # LongTextAgent
 
-LongTextAgent is a Python 3.11+ project for building a LangChain and LangGraph
-agent system that writes long-form reports, project proposals, research plans,
-weekly reports, and similar structured documents.
+LongTextAgent is a Python 3.11+ LangChain and LangGraph agent system for
+long-form reports, project proposals, research plans, weekly reports, and
+structured planning documents.
 
-It is designed as a staged writing workflow rather than a single chat prompt:
-the system parses a writing request, loads local source material, plans an
-outline, writes section by section, reviews consistency, revises, assembles, and
-exports the final document.
+It is not a single-turn chatbot. The workflow parses the writing request, loads
+local sources, plans an outline, writes section by section, reviews consistency,
+revises, assembles, and exports the final document. LangGraph checkpoints allow
+long tasks to pause and resume by `thread_id`.
 
 ## Architecture
 
@@ -15,7 +15,8 @@ exports the final document.
 flowchart LR
     request["request"] --> parse["parse"]
     parse --> source["source loading"]
-    source --> outline["outline"]
+    source --> rag["local RAG retrieval"]
+    rag --> outline["outline"]
     outline --> writing["section writing"]
     writing --> review["review"]
     review --> revise["revise"]
@@ -25,19 +26,22 @@ flowchart LR
 
 Core modules:
 
-- `writing_agent.config`: environment-driven settings with safe summaries.
-- `writing_agent.llm`: provider adapter for Ollama, OpenAI-compatible APIs, and OpenAI.
-- `writing_agent.models`: Pydantic contracts for requests, plans, drafts, reviews, and final output.
-- `writing_agent.graph`: LangGraph state, nodes, and workflow assembly.
+- `writing_agent.config`: environment-driven settings with secret-safe summaries.
+- `writing_agent.llm`: Ollama, OpenAI-compatible, and OpenAI chat model adapters.
+- `writing_agent.models`: Pydantic contracts for requests, plans, drafts, sources, and output.
+- `writing_agent.graph`: LangGraph state, interrupt nodes, workflow assembly, and resume helpers.
+- `writing_agent.checkpoints`: SQLite checkpointer creation and thread metadata.
+- `writing_agent.rag`: minimal local chunking, in-memory indexing, and term-overlap retrieval.
+- `writing_agent.evaluation`: deterministic quality metrics for generated markdown.
 - `writing_agent.tools`: local document loading and markdown/docx export helpers.
-- `writing_agent.prompts`: planner, writer, reviewer, and editor prompt builders.
 - `writing_agent.cli`: Typer command line interface.
 
-## Installation
+## Python 3.11 Environment
 
-Use Python 3.11 or newer.
+Use Python 3.11 or newer. The project intentionally declares
+`requires-python = ">=3.11"`.
 
-On Linux or macOS:
+Linux or macOS:
 
 ```bash
 python3.11 -m venv .venv
@@ -46,7 +50,7 @@ python -m pip install -U pip
 python -m pip install -e ".[dev]"
 ```
 
-On Windows PowerShell:
+Windows PowerShell:
 
 ```powershell
 py -3.11 -m venv .venv
@@ -61,16 +65,6 @@ Run checks:
 ruff check .
 pytest
 ```
-
-Check the active environment:
-
-```bash
-writing-agent doctor
-```
-
-`doctor` reports the Python version, current working directory, `.env` status,
-data/output directory status, checkpoint path, LLM provider, and configured
-model name. It never prints API keys.
 
 ## Environment
 
@@ -93,18 +87,28 @@ OUTPUT_DIR=./outputs
 CHECKPOINT_DB_PATH=./outputs/checkpoints.sqlite
 ```
 
-Provider modes:
+`LLM_PROVIDER` values:
 
-- `LLM_PROVIDER=ollama`: uses `langchain_ollama.ChatOllama`.
-- `LLM_PROVIDER=openai_compatible`: uses `langchain_openai.ChatOpenAI` with `OPENAI_BASE_URL`.
-- `LLM_PROVIDER=openai`: uses `langchain_openai.ChatOpenAI` with the default OpenAI API.
+- `ollama`: uses `langchain_ollama.ChatOllama`.
+- `openai_compatible`: uses `langchain_openai.ChatOpenAI` with `OPENAI_BASE_URL`.
+- `openai`: uses `langchain_openai.ChatOpenAI`.
 
-The code never hardcodes API keys and the default `.gitignore` excludes `.env`,
-local data, checkpoints, caches, and generated outputs.
+API keys are never hardcoded, and `.gitignore` excludes `.env`, local data,
+checkpoints, generated outputs, and cache directories.
 
-## Ollama
+## Doctor
 
-Start Ollama and make sure the configured model exists:
+```bash
+writing-agent doctor
+```
+
+`doctor` prints the active Python version, whether Python 3.11+ is satisfied,
+current working directory, `.env` status, data/output directory status,
+checkpoint path, LLM provider, and model name. It does not print API keys.
+
+## Ollama Model Check
+
+Start Ollama and ensure the configured models exist:
 
 ```bash
 ollama serve
@@ -112,34 +116,22 @@ ollama pull qwen3.6:35b
 ollama pull qwen3-embedding:8b
 ```
 
-If you expose Ollama over an SSH tunnel, set:
-
-```env
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=qwen3.6:35b
-```
-
-Check the configured chat model:
+Check the configured model:
 
 ```bash
 writing-agent check-model
 ```
 
-Or without installing the console script:
+For Ollama, this checks `OLLAMA_BASE_URL`, calls `ChatOllama`, and prints model
+name, base URL, elapsed time, and the first 200 response characters.
 
-```bash
-python -m writing_agent.cli check-model
-```
+Windows and Docker notes:
 
-## CLI Usage
+- Local Windows Ollama normally uses `http://localhost:11434`.
+- In a container calling a Windows host service, `host.docker.internal` may be required.
+- If the check fails, run `ollama list` and confirm `OLLAMA_MODEL` exists.
 
-Generate example request files:
-
-```bash
-writing-agent init-example
-```
-
-Run a writing workflow with local sources:
+## Run A Writing Workflow
 
 ```bash
 writing-agent run \
@@ -149,21 +141,14 @@ writing-agent run \
   --length "5000字" \
   --style "正式、技术导向、少空话" \
   --source ./data/forestry_notes.md \
-  --output-format markdown
+  --output-format markdown \
+  --thread-id forestry-plan-demo \
+  --rag \
+  --top-k 5
 ```
 
-The workflow writes a timestamped file to `OUTPUT_DIR`, which defaults to
-`./outputs`.
-
-Human review entry points:
-
-```bash
-writing-agent run --topic "..." --pause-after-outline
-writing-agent run --topic "..." --pause-before-export
-```
-
-These flags stop the graph at the outline or assembled final-draft stage and set
-`awaiting_human_review=true` in the returned state.
+If `--thread-id` is omitted, the CLI generates a readable id like
+`writing-20260608-153000`. Checkpoints and metadata are bound to this id.
 
 Supported source file types:
 
@@ -172,36 +157,108 @@ Supported source file types:
 - `.docx`
 - `.pdf`
 
-Large source files are truncated for the first implementation to avoid
-overloading the model context. The loader returns normalized source notes with
-`path`, `title`, `content_preview`, and `full_text`.
+Generated markdown is written to `OUTPUT_DIR`, defaulting to `./outputs`.
 
-## Checkpoints
+## Human Review And Resume
 
-`build_workflow()` compiles a LangGraph `StateGraph` with a SQLite checkpoint
-saver by default. The database path comes from `CHECKPOINT_DB_PATH`, defaulting
-to `./outputs/checkpoints.sqlite`.
+Pause after outline:
 
-For tests or offline smoke runs, call:
-
-```python
-run_writing_workflow(request, checkpointer=False, use_llm=False)
+```bash
+writing-agent run \
+  --topic "智慧林务系统建设计划书" \
+  --thread-id forestry-plan-demo \
+  --pause-after-outline
 ```
 
-That path exercises the graph without calling a real LLM.
+Pause before final export:
 
-## Human Review
+```bash
+writing-agent run \
+  --topic "智慧林务系统建设计划书" \
+  --thread-id forestry-plan-demo \
+  --pause-before-export
+```
 
-The graph supports pause points after outline planning and after final draft
-assembly. The current CLI exposes those pause points, while an interactive edit
-and resume command is reserved for the next iteration.
+When the graph pauses, the CLI prints the `thread_id`, interrupt payload, and a
+resume command. Create a review file:
+
+```bash
+echo "提纲整体可用，但请增加系统评估、部署风险、数据安全章节。" > review.md
+```
+
+Resume:
+
+```bash
+writing-agent resume \
+  --thread-id forestry-plan-demo \
+  --review-file review.md
+```
+
+Review files can be markdown text or JSON. Resume uses LangGraph
+`Command(resume=...)` and continues from the checkpoint to export.
+
+## Thread Metadata
+
+List known threads:
+
+```bash
+writing-agent threads
+```
+
+Inspect one thread:
+
+```bash
+writing-agent inspect --thread-id forestry-plan-demo
+```
+
+Thread metadata is stored in `outputs/thread_metadata.json`. It summarizes
+`thread_id`, update time, current step, interruption status, request topic,
+section count, review finding count, final-document presence, and output path.
+
+## Local RAG
+
+The first RAG implementation is intentionally small and replaceable:
+
+- `simple_chunk_text()` splits local source text by paragraph with overlap.
+- `build_local_index()` builds an in-memory `list[DocumentChunk]`.
+- `retrieve()` uses simple term-overlap scoring.
+
+Before each section is written, the workflow retrieves top-k source chunks using
+the section goal and key points. Only those chunks are injected into the writer
+prompt. If no chunks match, the draft marks `本节资料依据不足`.
+
+Disable local RAG:
+
+```bash
+writing-agent run --topic "..." --no-rag
+```
+
+## Evaluate Output
+
+Evaluate generated markdown:
+
+```bash
+writing-agent evaluate --file outputs/<generated_file>.md
+```
+
+JSON output:
+
+```bash
+writing-agent evaluate --file outputs/<generated_file>.md --json
+```
+
+Rule metrics include character count, word count, heading counts, section count,
+abstract/conclusion/reference detection, repeated paragraph ratio,
+`依据不足` count, and generic phrase risk terms such as `赋能`, `高质量发展`,
+`形成闭环`, `显著提升`, `多措并举`, `夯实基础`, and `智能化水平`.
 
 ## Roadmap
 
-- RAG retrieval over local sources with chunking, embeddings, and citations.
+- Replace minimal RAG with embeddings and a persistent vector index.
 - Web search tool integration for fresh external context.
-- Human review breakpoints for outline and final draft editing.
-- Richer docx export with styles, tables, and references.
-- Multi-agent collaboration for planning, drafting, review, and editing roles.
-- LangSmith tracing for debugging long workflows.
-- Evaluation sets and automatic scoring for structure, faithfulness, and style.
+- Interactive human editing and richer resume controls.
+- Styled docx export with tables, references, and templates.
+- Multi-agent collaboration for planner, writer, reviewer, and editor roles.
+- LangSmith tracing for long workflow debugging.
+- Evaluation datasets and optional LLM-as-judge scoring.
+

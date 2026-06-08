@@ -14,6 +14,7 @@ from rich.table import Table
 
 from writing_agent.checkpoints import inspect_thread, list_threads
 from writing_agent.config import get_settings
+from writing_agent.evaluation.evaluator import evaluate_markdown
 from writing_agent.graph.workflow import (
     generate_thread_id,
     resume_writing_workflow,
@@ -58,9 +59,7 @@ def build_doctor_report() -> dict[str, object]:
     python_version = ".".join(str(part) for part in sys.version_info[:3])
     python_ok = sys.version_info >= (3, 11)
     model_name = (
-        settings.ollama_model
-        if settings.llm_provider == "ollama"
-        else settings.openai_model
+        settings.ollama_model if settings.llm_provider == "ollama" else settings.openai_model
     )
     return {
         "python_version": python_version,
@@ -256,6 +255,33 @@ def inspect_command(
         "output_path",
     ]:
         table.add_row(key, str(summary.get(key, "")))
+    console.print(table)
+
+
+@app.command()
+def evaluate(
+    file: Annotated[
+        Path,
+        typer.Option("--file", exists=True, file_okay=True, dir_okay=False),
+    ],
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print JSON instead of a Rich table."),
+    ] = False,
+) -> None:
+    """Evaluate a generated markdown document with rule-based metrics."""
+
+    result = evaluate_markdown(file)
+    if json_output:
+        console.print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+
+    table = Table(title=f"Evaluation: {file}")
+    table.add_column("Metric")
+    table.add_column("Value")
+    for key, value in result.items():
+        rendered = json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else str(value)
+        table.add_row(key, rendered)
     console.print(table)
 
 
