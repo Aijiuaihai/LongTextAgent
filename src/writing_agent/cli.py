@@ -14,7 +14,11 @@ from rich.table import Table
 
 from writing_agent.checkpoints import inspect_thread, list_threads
 from writing_agent.config import get_settings
-from writing_agent.evaluation.batch import evaluate_batch_directory, run_batch_tasks
+from writing_agent.evaluation.batch import (
+    build_baseline_summary,
+    evaluate_batch_directory,
+    run_batch_tasks,
+)
 from writing_agent.evaluation.evaluator import evaluate_markdown
 from writing_agent.evaluation.llm_judge import judge_document_with_llm
 from writing_agent.graph.workflow import (
@@ -24,6 +28,7 @@ from writing_agent.graph.workflow import (
 )
 from writing_agent.llm import format_connection_help, get_chat_model
 from writing_agent.models import DocumentType, WritingRequest
+from writing_agent.observability.langsmith import configure_langsmith, is_langsmith_enabled
 from writing_agent.rag.collections import (
     delete_collection,
     export_collection_manifest,
@@ -113,6 +118,27 @@ def doctor() -> None:
             "[red]Python 3.11+ is required.[/red] "
             "Create a 3.11 environment before installing the project."
         )
+
+
+def build_trace_check_report() -> dict[str, object]:
+    """Build secret-safe LangSmith trace check report."""
+
+    settings = get_settings()
+    warnings = configure_langsmith(settings)
+    return {
+        "langsmith_tracing": settings.langsmith_tracing,
+        "langsmith_project": settings.langsmith_project,
+        "api_key_detected": settings.langsmith_api_key is not None,
+        "will_upload_trace": is_langsmith_enabled(settings),
+        "warnings": warnings,
+    }
+
+
+@app.command("trace-check")
+def trace_check() -> None:
+    """Check LangSmith tracing configuration without printing secrets."""
+
+    console.print(build_trace_check_report())
 
 
 @app.command()
@@ -515,9 +541,17 @@ def batch_run(
         str,
         typer.Option("--output-format", help="markdown, docx, or both."),
     ] = "markdown",
+    trace: Annotated[
+        bool,
+        typer.Option("--trace/--no-trace", help="Enable optional LangSmith tracing."),
+    ] = False,
 ) -> None:
     """Run a JSONL batch of writing tasks."""
 
+    if trace:
+        trace_report = build_trace_check_report()
+        if trace_report["warnings"]:
+            console.print(trace_report["warnings"])
     result = run_batch_tasks(
         tasks,
         output_dir=output_dir,
@@ -535,6 +569,43 @@ def batch_run(
     for item in result["results"]:
         if item["status"] == "failed":
             console.print(f"[red]{item['id']} failed:[/red] {item['error_message']}")
+
+
+@app.command("baseline-run")
+def baseline_run(
+    tasks: Annotated[
+        Path,
+        typer.Option("--tasks", exists=True, file_okay=True, dir_okay=False),
+    ],
+    collection: Annotated[str, typer.Option("--collection", help="Chroma collection name.")],
+    rag_mode: Annotated[str, typer.Option("--rag-mode", help="keyword, vector, or hybrid.")] = (
+        "hybrid"
+    ),
+    output_dir: Annotated[Path, typer.Option("--output-dir", help="Baseline output root.")] = (
+        Path("outputs/baseline")
+    ),
+) -> None:
+    """Run a fixed baseline batch and write baseline_summary.json."""
+
+    settings = get_settings()
+    result = run_batch_tasks(
+        tasks,
+        output_dir=output_dir,
+        rag_mode=rag_mode,
+        collection=collection,
+        output_format="markdown",
+        settings=settings,
+    )
+    summary = build_baseline_summary(
+        batch_result=result,
+        rag_mode=rag_mode,
+        collection=collection,
+        settings=settings,
+    )
+    summary_path = Path(result["run_dir"]) / "baseline_summary.json"
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    console.print(f"[green]Baseline summary:[/green] {summary_path}")
+    console.print(summary)
 
 
 @app.command("batch-rerun-failed")

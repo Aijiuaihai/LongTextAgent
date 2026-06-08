@@ -1,6 +1,7 @@
 """Batch generation and evaluation helpers."""
 
 import json
+import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +12,7 @@ from writing_agent.evaluation.batch_report import utc_now, write_failed_tasks, w
 from writing_agent.evaluation.evaluator import evaluate_markdown
 from writing_agent.graph.workflow import run_writing_workflow
 from writing_agent.models import WritingRequest
+from writing_agent.verification.verifier import verify_citations_in_file
 
 
 def load_jsonl_tasks(path: Path | str) -> list[dict[str, Any]]:
@@ -172,3 +174,63 @@ def evaluate_batch_directory(input_dir: Path | str) -> dict[str, Any]:
         "risk_term_total": risk_total,
     }
     return {"file_count": count, "evaluations": evaluations, "summary": summary}
+
+
+def _git_commit_hash() -> str:
+    try:
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    except Exception:
+        return ""
+
+
+def _rule_score(evaluation: dict[str, Any]) -> float:
+    score = 0.0
+    score += 1.0 if evaluation.get("has_abstract") else 0.0
+    score += 1.0 if evaluation.get("has_conclusion") else 0.0
+    score += 1.0 if evaluation.get("has_references") else 0.0
+    score += min(float(evaluation.get("section_count", 0)) / 5.0, 1.0)
+    score += max(0.0, 1.0 - float(evaluation.get("repeated_paragraph_ratio", 0)))
+    return score / 5.0
+
+
+def build_baseline_summary(
+    *,
+    batch_result: dict[str, Any],
+    rag_mode: str,
+    collection: str,
+    settings: Settings,
+) -> dict[str, Any]:
+    """Build baseline summary for a completed batch run."""
+
+    run_dir = Path(batch_result["run_dir"])
+    evaluation = evaluate_batch_directory(run_dir)
+    markdown_files = sorted((run_dir / "task_outputs").glob("*.md"))
+    citation_results = [
+        verify_citations_in_file(path, collection=collection) for path in markdown_files
+    ]
+    total_citations = sum(item.total_citations for item in citation_results)
+    valid_citations = sum(item.valid_citations for item in citation_results)
+    citation_rate = valid_citations / total_citations if total_citations else 0.0
+    evaluations = evaluation["evaluations"]
+    average_rule_score = (
+        sum(_rule_score(item) for item in evaluations) / len(evaluations) if evaluations else 0.0
+    )
+    return {
+        "commit_hash": _git_commit_hash(),
+        "model_name": settings.ollama_model
+        if settings.llm_provider == "ollama"
+        else settings.openai_model,
+        "embedding_model": settings.ollama_embedding_model
+        if settings.embedding_provider == "ollama"
+        else settings.openai_model,
+        "rag_mode": rag_mode,
+        "collection": collection,
+        "task_count": batch_result["success"] + batch_result["failure"],
+        "success_count": batch_result["success"],
+        "failed_count": batch_result["failure"],
+        "average_rule_score": average_rule_score,
+        "average_citation_valid_rate": citation_rate,
+        "average_insufficient_evidence_count": evaluation["summary"][
+            "average_insufficient_evidence_count"
+        ],
+    }

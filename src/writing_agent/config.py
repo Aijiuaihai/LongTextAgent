@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     output_dir: Path = Field(default=Path("./outputs"))
     checkpoint_db_path: Path = Field(default=Path("./outputs/checkpoints.sqlite"))
 
+    langsmith_tracing: bool = False
+    langsmith_api_key: SecretStr | None = None
+    langsmith_project: str = "writing-agent-local"
+    langsmith_endpoint: str | None = None
+
     def safe_summary(self) -> dict[str, str | None]:
         """Return a log-safe configuration summary without secrets."""
 
@@ -42,6 +47,9 @@ class Settings(BaseSettings):
             "data_dir": str(self.data_dir),
             "output_dir": str(self.output_dir),
             "checkpoint_db_path": str(self.checkpoint_db_path),
+            "langsmith_tracing": str(self.langsmith_tracing),
+            "langsmith_project": self.langsmith_project,
+            "langsmith_endpoint": self.langsmith_endpoint,
         }
 
 
@@ -50,4 +58,3 @@ def get_settings() -> Settings:
     """Load settings once per process."""
 
     return Settings()
-
