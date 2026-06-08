@@ -3,8 +3,9 @@
 import json
 from pathlib import Path
 
-from writing_agent.models import DocumentChunk, SourceNote
+from writing_agent.models import SourceNote
 from writing_agent.rag.chunker import simple_chunk_text
+from writing_agent.rag.models import DocumentChunk
 
 
 def build_local_index(
@@ -25,6 +26,7 @@ def build_local_index(
                 title=note.title,
                 chunk_size=chunk_size,
                 overlap=overlap,
+                metadata={"source_title": note.title},
             )
         )
 
@@ -35,4 +37,3 @@ def build_local_index(
             encoding="utf-8",
         )
     return chunks
-

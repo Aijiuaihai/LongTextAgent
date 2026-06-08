@@ -21,7 +21,8 @@ from writing_agent.prompts.planner import build_planner_prompt
 from writing_agent.prompts.reviewer import build_reviewer_prompt
 from writing_agent.prompts.writer import build_writer_prompt
 from writing_agent.rag.index import build_local_index
-from writing_agent.rag.retriever import retrieve
+from writing_agent.rag.retriever import HybridRetriever, VectorRetriever, retrieve
+from writing_agent.rag.vector_index import build_chroma_index, load_chroma_index
 from writing_agent.tools.document_loader import load_sources
 from writing_agent.tools.export import export_docx, export_markdown
 
@@ -93,12 +94,16 @@ def _source_summary(notes: list[SourceNote], max_chars: int = 6000) -> str:
 def _chunk_summary(chunks: list[Any], max_chars: int = 6000) -> str:
     if not chunks:
         return "No relevant source chunks were retrieved. 本节资料依据不足。"
+    def _title(chunk: Any) -> str:
+        metadata = getattr(chunk, "metadata", {})
+        return str(getattr(chunk, "title", "") or metadata.get("title", ""))
+
     parts = [
         (
-            f"[{chunk.chunk_id}]\n"
-            f"Source: {chunk.source_path}\n"
-            f"Title: {chunk.title}\n"
-            f"Text: {chunk.text}"
+            f"[{getattr(chunk, 'chunk_id', '')}]\n"
+            f"Source: {getattr(chunk, 'source_path', '')}\n"
+            f"Title: {_title(chunk)}\n"
+            f"Text: {getattr(chunk, 'text', '')}"
         )
         for chunk in chunks
     ]
@@ -244,6 +249,50 @@ def _review_text(review: Any) -> str:
     return json.dumps(review, ensure_ascii=False)
 
 
+def _result_to_reference(result: Any) -> str:
+    return f"- {getattr(result, 'chunk_id', '')} ({getattr(result, 'source_path', '')})"
+
+
+def _retrieve_section_sources(
+    *,
+    state: WritingState,
+    notes: list[SourceNote],
+    query: str,
+    top_k: int,
+    keyword_chunks: list[Any],
+) -> list[Any]:
+    rag_mode = str(state.get("rag_mode", "hybrid"))
+    collection = str(state.get("rag_collection", "") or "")
+    output_dir = state.get("output_dir", "./outputs")
+
+    if rag_mode == "keyword" or not collection:
+        return retrieve(query, keyword_chunks, top_k=top_k)
+
+    try:
+        if notes and state.get("rag_rebuild_index", False):
+            vector_store = build_chroma_index(
+                notes,
+                collection_name=collection,
+                persist_dir=f"{output_dir}/chroma",
+            )
+        else:
+            vector_store = load_chroma_index(
+                collection_name=collection,
+                persist_dir=f"{output_dir}/chroma",
+            )
+        vector_retriever = VectorRetriever(vector_store)
+        if rag_mode == "vector":
+            return vector_retriever.retrieve(query, top_k=top_k)
+        return HybridRetriever(
+            vector_retriever=vector_retriever,
+            keyword_chunks=keyword_chunks,
+        ).retrieve(query, top_k=top_k)
+    except Exception:
+        if rag_mode == "vector":
+            return []
+        return retrieve(query, keyword_chunks, top_k=top_k)
+
+
 def parse_request_node(state: WritingState) -> WritingState:
     """Normalize the incoming request."""
 
@@ -321,14 +370,26 @@ def write_sections_node(state: WritingState) -> WritingState:
     notes = _source_notes_from_state(state)
     rag_enabled = bool(state.get("rag_enabled", True))
     top_k = int(state.get("rag_top_k", 5))
-    chunks = build_local_index(notes) if rag_enabled else []
+    keyword_chunks = build_local_index(notes) if rag_enabled else []
     source_summary = _source_summary(notes)
     drafts: list[SectionDraft] = []
     errors = _errors(state)
 
     for section in plan.sections:
-        query = " ".join([section.goal, *section.key_points, *section.evidence_needed])
-        retrieved_chunks = retrieve(query, chunks, top_k=top_k) if rag_enabled else []
+        query = " ".join(
+            [section.title, section.goal, *section.key_points, *section.evidence_needed]
+        )
+        retrieved_chunks = (
+            _retrieve_section_sources(
+                state=state,
+                notes=notes,
+                query=query,
+                top_k=top_k,
+                keyword_chunks=keyword_chunks,
+            )
+            if rag_enabled
+            else []
+        )
         section_sources = _chunk_summary(retrieved_chunks) if rag_enabled else source_summary
         if not _use_llm(state):
             evidence_line = (
@@ -337,7 +398,7 @@ def write_sections_node(state: WritingState) -> WritingState:
                 else "本节资料依据不足。"
             )
             references = (
-                "\n".join(f"- {chunk.chunk_id} ({chunk.source_path})" for chunk in retrieved_chunks)
+                "\n".join(_result_to_reference(chunk) for chunk in retrieved_chunks)
                 if retrieved_chunks
                 else "- 本节资料依据不足"
             )
@@ -367,7 +428,7 @@ def write_sections_node(state: WritingState) -> WritingState:
             SectionDraft(
                 title=section.title,
                 content=content,
-                citations=[chunk.chunk_id for chunk in retrieved_chunks],
+                citations=[str(getattr(chunk, "chunk_id", "")) for chunk in retrieved_chunks],
                 revision_notes=[],
             )
         )
@@ -382,10 +443,13 @@ def review_document_node(state: WritingState) -> WritingState:
     drafts = _drafts_from_state(state)
     draft_markdown = "\n\n".join(draft.content for draft in drafts)
     errors = _errors(state)
+    has_evidence_gap = (
+        "依据不足" in draft_markdown or "insufficient evidence" in draft_markdown.lower()
+    )
 
     if not _use_llm(state):
         findings: list[ReviewFinding] = []
-        if "依据不足" in draft_markdown or "insufficient evidence" in draft_markdown.lower():
+        if has_evidence_gap:
             findings.append(
                 ReviewFinding(
                     issue_type="evidence_gap",
@@ -407,18 +471,15 @@ def review_document_node(state: WritingState) -> WritingState:
             )
         return {"review_findings": findings, "current_step": "review_document", "errors": errors}
 
-    if "依据不足" in draft_markdown or "insufficient evidence" in draft_markdown.lower():
-        findings = [
-            ReviewFinding(
-                issue_type="evidence_gap",
-                severity="medium",
-                location="sections",
-                comment="The draft contains explicit insufficient-evidence markers.",
-                suggestion="Add sources or keep the markers instead of making unsupported claims.",
-            )
-        ]
-    else:
-        findings = []
+    findings = [
+        ReviewFinding(
+            issue_type="evidence_gap",
+            severity="medium",
+            location="sections",
+            comment="The draft contains explicit insufficient-evidence markers.",
+            suggestion="Add sources or keep the markers instead of making unsupported claims.",
+        )
+    ] if has_evidence_gap else []
 
     try:
         text = _invoke_model(build_reviewer_prompt(_request_summary(request), draft_markdown))
@@ -503,6 +564,8 @@ def assemble_document_node(state: WritingState) -> WritingState:
             "audience": request.audience,
             "target_length": request.target_length,
             "review_findings": [finding.model_dump(mode="json") for finding in findings],
+            "rag_mode": state.get("rag_mode", "hybrid"),
+            "collection": state.get("rag_collection", ""),
         },
     )
     return {

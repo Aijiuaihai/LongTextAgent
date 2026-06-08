@@ -24,7 +24,10 @@ class WritingState(TypedDict, total=False):
     final_document: FinalDocument | dict[str, Any]
     human_review_notes: Any
     rag_enabled: bool
+    rag_mode: str
     rag_top_k: int
+    rag_collection: str
+    rag_rebuild_index: bool
     output_path: str
     output_format: str
     output_dir: str

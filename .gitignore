@@ -21,6 +21,7 @@ build/
 
 outputs/*
 !outputs/.gitkeep
+outputs/chroma/
 data/
 *.sqlite
 *.sqlite3
@@ -28,4 +29,3 @@ data/
 
 .DS_Store
 Thumbs.db
-

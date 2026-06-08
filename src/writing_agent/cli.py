@@ -22,6 +22,13 @@ from writing_agent.graph.workflow import (
 )
 from writing_agent.llm import format_connection_help, get_chat_model
 from writing_agent.models import DocumentType, WritingRequest
+from writing_agent.rag.retriever import VectorRetriever
+from writing_agent.rag.vector_index import (
+    add_documents_to_index,
+    load_chroma_index,
+    reset_chroma_index,
+)
+from writing_agent.tools.document_loader import load_sources
 
 app = typer.Typer(help="Long-form writing agent CLI.", no_args_is_help=True)
 console = Console()
@@ -133,6 +140,18 @@ def run(
         bool,
         typer.Option("--rag/--no-rag", help="Use minimal local RAG retrieval."),
     ] = True,
+    rag_mode: Annotated[
+        str,
+        typer.Option("--rag-mode", help="keyword, vector, or hybrid."),
+    ] = "hybrid",
+    collection: Annotated[
+        str | None,
+        typer.Option("--collection", help="Chroma collection name for vector RAG."),
+    ] = None,
+    rebuild_index: Annotated[
+        bool,
+        typer.Option("--rebuild-index/--no-rebuild-index", help="Rebuild collection from sources."),
+    ] = False,
     top_k: Annotated[int, typer.Option("--top-k", help="Retrieved source chunks per section.")] = 5,
 ) -> None:
     """Run the long-form writing workflow."""
@@ -157,6 +176,9 @@ def run(
             "pause_after_outline": pause_after_outline,
             "pause_before_export": pause_before_export,
             "rag_enabled": rag,
+            "rag_mode": rag_mode,
+            "rag_collection": collection or "",
+            "rag_rebuild_index": rebuild_index,
             "rag_top_k": top_k,
         },
         settings=settings,
@@ -175,6 +197,55 @@ def run(
             console.print(result["__interrupt__"])
     else:
         console.print(f"[green]Exported:[/green] {result.get('output_path')}")
+
+
+@app.command("index")
+def index_command(
+    source: Annotated[
+        list[str],
+        typer.Option("--source", help="Local source path. Can be repeated."),
+    ],
+    collection: Annotated[str, typer.Option("--collection", help="Chroma collection name.")],
+    reset: Annotated[
+        bool,
+        typer.Option("--reset", help="Reset the collection before indexing."),
+    ] = False,
+) -> None:
+    """Build or update a local Chroma index."""
+
+    settings = get_settings()
+    if reset:
+        reset_chroma_index(collection, settings=settings)
+        console.print(f"[yellow]Reset collection:[/yellow] {collection}")
+    notes = load_sources(source)
+    add_documents_to_index(notes, collection_name=collection, settings=settings)
+    console.print(f"[green]Indexed sources:[/green] {len(notes)}")
+    console.print(f"[bold]collection:[/bold] {collection}")
+
+
+@app.command("retrieve")
+def retrieve_command(
+    query: Annotated[str, typer.Option("--query", help="Retrieval query.")],
+    collection: Annotated[str, typer.Option("--collection", help="Chroma collection name.")],
+    top_k: Annotated[int, typer.Option("--top-k", help="Number of chunks to return.")] = 5,
+) -> None:
+    """Retrieve chunks from a local Chroma collection."""
+
+    vector_store = load_chroma_index(collection_name=collection, settings=get_settings())
+    results = VectorRetriever(vector_store).retrieve(query, top_k=top_k)
+    table = Table(title=f"Retrieval: {collection}")
+    table.add_column("chunk_id")
+    table.add_column("score")
+    table.add_column("source_path")
+    table.add_column("preview")
+    for result in results:
+        table.add_row(
+            result.chunk_id,
+            f"{result.score:.3f}",
+            result.source_path,
+            result.text[:160],
+        )
+    console.print(table)
 
 
 def _load_review_file(path: Path) -> object:

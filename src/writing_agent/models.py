@@ -5,6 +5,20 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from writing_agent.rag.models import DocumentChunk
+
+__all__ = [
+    "DocumentChunk",
+    "DocumentType",
+    "FinalDocument",
+    "ReviewFinding",
+    "SectionDraft",
+    "SectionPlan",
+    "SourceNote",
+    "WritingPlan",
+    "WritingRequest",
+]
+
 
 class DocumentType(str, Enum):
     """Supported high-level document categories."""
@@ -55,15 +69,6 @@ class SourceNote(BaseModel):
     title: str
     content_preview: str
     full_text: str
-
-
-class DocumentChunk(BaseModel):
-    """A retrievable source chunk."""
-
-    source_path: str
-    chunk_id: str
-    title: str
-    text: str
 
 
 class SectionDraft(BaseModel):
