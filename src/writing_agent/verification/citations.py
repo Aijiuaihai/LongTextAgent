@@ -37,7 +37,11 @@ def extract_citations(markdown: str) -> list[ExtractedCitation]:
     in_references = False
     for line_number, line in enumerate(markdown.splitlines(), start=1):
         stripped = line.strip()
-        is_reference_heading = "参考依据" in stripped or stripped.lower().startswith("references")
+        is_reference_heading = (
+            "参考依据" in stripped
+            or "鍙傝€冧緷鎹" in stripped
+            or stripped.lower().startswith("references")
+        )
         if stripped.startswith("#") and not is_reference_heading:
             current_section = stripped.lstrip("#").strip()
             in_references = False

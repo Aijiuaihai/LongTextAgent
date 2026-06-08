@@ -43,6 +43,7 @@ from writing_agent.rag.vector_index import (
     reset_chroma_index,
 )
 from writing_agent.tools.document_loader import load_sources
+from writing_agent.verification.repair import repair_citations_in_file
 from writing_agent.verification.report import citation_result_to_json, print_citation_report
 from writing_agent.verification.verifier import verify_citations_in_file
 
@@ -463,6 +464,13 @@ def evaluate(
         str | None,
         typer.Option("--collection", help="Collection name for citation verification."),
     ] = None,
+    repair_citations: Annotated[
+        bool,
+        typer.Option(
+            "--repair-citations",
+            help="Conservatively repair invalid citations after verification.",
+        ),
+    ] = False,
 ) -> None:
     """Evaluate a generated markdown document with rule-based metrics."""
 
@@ -481,6 +489,13 @@ def evaluate(
                 "citation_status": citation_result.overall_status,
             }
         )
+        if repair_citations:
+            repair_result = repair_citations_in_file(
+                file,
+                collection=collection,
+                mode="conservative",
+            )
+            result["citation_repair"] = repair_result.model_dump(mode="json")
     if json_output:
         console.print(json.dumps(result, ensure_ascii=False, indent=2))
         return
@@ -497,6 +512,20 @@ def evaluate(
         console.print(result["llm_judge"])
     if verify_citations:
         print_citation_report(citation_result, console)
+        if repair_citations:
+            console.print("[bold]Citation repair[/bold]")
+            console.print(
+                {
+                    "output_path": repair_result.output_path,
+                    "replaced": repair_result.replaced_count,
+                    "downgraded": repair_result.downgraded_count,
+                    "kept": repair_result.kept_count,
+                    "before": repair_result.before.overall_status
+                    if repair_result.before
+                    else "",
+                    "after": repair_result.after.overall_status if repair_result.after else "",
+                }
+            )
 
 
 @app.command("verify-citations")
@@ -521,6 +550,66 @@ def verify_citations_command(
         console.print(citation_result_to_json(result))
         return
     print_citation_report(result, console)
+
+
+@app.command("repair-citations")
+def repair_citations_command(
+    file: Annotated[
+        Path,
+        typer.Option("--file", exists=True, file_okay=True, dir_okay=False),
+    ],
+    collection: Annotated[
+        str | None,
+        typer.Option("--collection", help="Collection name for manifest lookup."),
+    ] = None,
+    mode: Annotated[
+        str,
+        typer.Option("--mode", help="conservative or llm_assisted."),
+    ] = "conservative",
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", help="Optional repaired markdown output path."),
+    ] = None,
+    in_place: Annotated[
+        bool,
+        typer.Option("--in-place", help="Overwrite file after writing a .bak backup."),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print JSON repair report."),
+    ] = False,
+) -> None:
+    """Repair invalid citations by replacement or insufficient-evidence downgrade."""
+
+    if mode not in {"conservative", "llm_assisted"}:
+        console.print("[red]--mode must be conservative or llm_assisted.[/red]")
+        raise typer.Exit(code=1)
+    try:
+        result = repair_citations_in_file(
+            file,
+            collection=collection,
+            mode=mode,  # type: ignore[arg-type]
+            output=output,
+            in_place=in_place,
+            settings=get_settings(),
+        )
+    except FileNotFoundError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    if json_output:
+        console.print(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2))
+        return
+    table = Table(title="Citation Repair")
+    table.add_column("metric")
+    table.add_column("value")
+    table.add_row("mode", result.mode)
+    table.add_row("output_path", result.output_path)
+    table.add_row("replaced", str(result.replaced_count))
+    table.add_row("downgraded", str(result.downgraded_count))
+    table.add_row("kept", str(result.kept_count))
+    table.add_row("before_status", result.before.overall_status if result.before else "")
+    table.add_row("after_status", result.after.overall_status if result.after else "")
+    console.print(table)
 
 
 @app.command("batch-run")
