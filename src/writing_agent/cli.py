@@ -44,13 +44,16 @@ from writing_agent.rag.vector_index import (
     reset_chroma_index,
 )
 from writing_agent.tools.document_loader import load_sources
+from writing_agent.tools.docx_preflight import validate_docx_template
 from writing_agent.verification.repair import repair_citations_in_file
 from writing_agent.verification.report import citation_result_to_json, print_citation_report
 from writing_agent.verification.verifier import verify_citations_in_file
 
 app = typer.Typer(help="Long-form writing agent CLI.", no_args_is_help=True)
 collections_app = typer.Typer(help="Manage local Chroma collections.")
+template_app = typer.Typer(help="Inspect and validate DOCX templates.")
 app.add_typer(collections_app, name="collections")
+app.add_typer(template_app, name="template")
 console = Console()
 
 
@@ -202,6 +205,15 @@ def run(
     """Run the long-form writing workflow."""
 
     settings = get_settings()
+    if docx_template is not None:
+        preflight = validate_docx_template(docx_template)
+        if preflight.status == "fail":
+            console.print("[red]DOCX template preflight failed.[/red]")
+            console.print(preflight.model_dump(mode="json"))
+            raise typer.Exit(code=1)
+        if preflight.status == "warning":
+            console.print("[yellow]DOCX template preflight warnings:[/yellow]")
+            console.print(preflight.model_dump(mode="json"))
     request = WritingRequest(
         topic=topic,
         document_type=document_type,
@@ -428,6 +440,41 @@ def collections_diff(
     console.print(table)
     for warning in summary["warnings"]:
         console.print(f"[yellow]Warning:[/yellow] {warning}")
+
+
+@template_app.command("preflight")
+def template_preflight(
+    template: Annotated[
+        Path,
+        typer.Option("--template", help="DOCX template path."),
+    ],
+    style_mapping: Annotated[
+        Path | None,
+        typer.Option("--style-mapping", help="Optional style mapping JSON."),
+    ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print JSON output."),
+    ] = False,
+) -> None:
+    """Validate a DOCX template before generation."""
+
+    result = validate_docx_template(template, style_mapping_path=style_mapping)
+    if json_output:
+        console.print(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2))
+    else:
+        table = Table(title="Template Preflight")
+        table.add_column("field")
+        table.add_column("value")
+        table.add_row("status", result.status)
+        table.add_row("missing_placeholders", ", ".join(result.missing_placeholders))
+        table.add_row("missing_styles", ", ".join(result.missing_styles))
+        table.add_row("warnings", "; ".join(result.warnings))
+        table.add_row("recommendations", "; ".join(result.recommendations))
+        table.add_row("error", result.error)
+        console.print(table)
+    if result.status == "fail":
+        raise typer.Exit(code=1)
 
 
 def _load_review_file(path: Path) -> object:
