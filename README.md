@@ -237,6 +237,56 @@ writing-agent collections delete --collection forestry_demo --yes
 Index manifests are written to `outputs/index_manifests/` and are ignored by
 Git because they may contain local paths and document metadata.
 
+## Citation Repair
+
+Repair invalid citations without overwriting the original file:
+
+```bash
+writing-agent repair-citations `
+  --file outputs/xxx.md `
+  --collection forestry_demo `
+  --mode conservative
+```
+
+`conservative` mode does not call an LLM. It downgrades unverifiable citations
+to an explicit insufficient-evidence note and records the original invalid
+reference in the repair report. `llm_assisted` mode asks the configured model to
+choose a real manifest chunk or downgrade the citation; if parsing fails it
+falls back to conservative repair.
+
+`evaluate` can run verification and conservative repair together:
+
+```bash
+writing-agent evaluate `
+  --file outputs/xxx.md `
+  --verify-citations `
+  --repair-citations `
+  --collection forestry_demo
+```
+
+## Collection Diff
+
+Compare two exported manifests:
+
+```bash
+writing-agent collections diff `
+  --old-manifest manifest_v1.json `
+  --new-manifest manifest_v2.json
+```
+
+Compare two local collection manifests:
+
+```bash
+writing-agent collections diff `
+  --old-collection forestry_v1 `
+  --new-collection forestry_v2 `
+  --json
+```
+
+If many chunks are removed, older generated documents may contain citations that
+no longer validate. If many sources change, rerun `baseline-run` before comparing
+quality.
+
 ## DOCX Templates
 
 Run with a user template:
@@ -272,6 +322,17 @@ Supported placeholders:
 If `{{body}}` is missing, the generated body is appended to the end and a warning
 is recorded. Word table-of-contents fields must be refreshed in Microsoft Word
 by right-clicking and updating the field.
+
+Preflight a template before generation:
+
+```bash
+writing-agent template preflight `
+  --template ./templates/proposal_template.docx
+```
+
+The preflight checks that the file is readable, required placeholders are
+present, common Word styles exist, and the template has a body insertion point.
+When `run --docx-template` is used, the same preflight runs automatically.
 
 ## Batch Runs
 
@@ -352,17 +413,77 @@ average citation valid rate, and average insufficient-evidence count.
 Use baseline summaries to compare different commits, models, embedding models,
 and RAG modes.
 
+Compare two baseline summaries:
+
+```bash
+writing-agent baseline-compare `
+  --base outputs/baseline/run_a/baseline_summary.json `
+  --candidate outputs/baseline/run_b/baseline_summary.json `
+  --fail-on-regression
+```
+
+Regression rules:
+
+- `average_rule_score` drops by more than 5%: warning.
+- `average_citation_valid_rate` drops by more than 3%: warning.
+- `average_insufficient_evidence_count` rises by more than 20%: warning.
+- `failed_count` increases: fail.
+
+## Optional Integration Tests
+
+Normal checks do not require Ollama, Chroma services, or LangSmith:
+
+```bash
+pytest
+```
+
+Run all integration tests explicitly:
+
+```bash
+pytest -m integration
+```
+
+Windows PowerShell Ollama integration:
+
+```powershell
+$env:RUN_INTEGRATION_TESTS="true"
+$env:RUN_OLLAMA_TESTS="true"
+pytest -m "integration and ollama"
+```
+
+Linux or macOS Ollama integration:
+
+```bash
+RUN_INTEGRATION_TESTS=true RUN_OLLAMA_TESTS=true pytest -m "integration and ollama"
+```
+
+Chroma persistence integration uses temporary directories:
+
+```bash
+RUN_INTEGRATION_TESTS=true RUN_CHROMA_TESTS=true pytest -m "integration and chroma"
+```
+
+## GitHub Actions CI
+
+The CI workflow runs on Ubuntu with Python 3.11. It installs `.[dev]`, runs
+`ruff check .`, and then runs regular `pytest`. CI does not run Ollama
+integration tests and does not need a local model service or LangSmith key.
+
 ## Recommended Engineering Flow
 
 1. Index the collection.
 2. Retrieve a few sanity-check chunks.
 3. Run one document.
 4. Verify citations.
-5. Evaluate the document.
-6. Run a batch.
-7. Batch-evaluate outputs.
-8. Run baseline.
-9. Compare baseline summaries across commits, models, and RAG modes.
+5. Repair citations if verification fails.
+6. Evaluate the document.
+7. Preflight the docx template.
+8. Export docx.
+9. Run a batch.
+10. Batch-evaluate outputs.
+11. Run baseline.
+12. Compare baseline summaries across commits, models, and RAG modes.
+13. Run optional integration tests before release.
 
 ## Known Limits
 

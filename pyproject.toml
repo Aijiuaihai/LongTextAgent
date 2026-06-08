@@ -45,6 +45,13 @@ packages = ["src/writing_agent"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+addopts = ["-m", "not integration"]
+markers = [
+  "integration: tests requiring local services",
+  "ollama: tests requiring Ollama",
+  "chroma: tests requiring Chroma persistence",
+  "slow: slow tests",
+]
 
 [tool.ruff]
 line-length = 100
