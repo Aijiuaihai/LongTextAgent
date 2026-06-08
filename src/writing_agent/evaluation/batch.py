@@ -1,10 +1,13 @@
 """Batch generation and evaluation helpers."""
 
 import json
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from writing_agent.config import Settings, get_settings
+from writing_agent.evaluation.batch_report import utc_now, write_failed_tasks, write_json
 from writing_agent.evaluation.evaluator import evaluate_markdown
 from writing_agent.graph.workflow import run_writing_workflow
 from writing_agent.models import WritingRequest
@@ -34,16 +37,25 @@ def run_batch_tasks(
     collection: str = "",
     output_format: str = "markdown",
     settings: Settings | None = None,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     """Run a set of writing tasks. Failures do not stop later tasks."""
 
     resolved_settings = settings or get_settings()
     tasks = load_jsonl_tasks(tasks_path)
-    results: list[dict[str, Any]] = []
+    resolved_run_id = run_id or datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_dir = Path(output_dir) / resolved_run_id
+    task_output_dir = run_dir / "task_outputs"
+    task_output_dir.mkdir(parents=True, exist_ok=True)
+    started_at = utc_now()
+    task_reports: list[dict[str, Any]] = []
+    failed_tasks: list[dict[str, Any]] = []
     success = 0
     failure = 0
     for task in tasks:
-        task_id = str(task.get("id") or f"task-{len(results) + 1}")
+        task_id = str(task.get("id") or f"task-{len(task_reports) + 1}")
+        started = time.perf_counter()
+        thread_id = f"batch-{resolved_run_id}-{task_id}"
         try:
             request = WritingRequest.model_validate(
                 {
@@ -59,7 +71,7 @@ def run_batch_tasks(
             result = run_writing_workflow(
                 {
                     "request": request,
-                    "output_dir": str(output_dir),
+                    "output_dir": str(task_output_dir),
                     "output_format": output_format,
                     "rag_enabled": True,
                     "rag_mode": rag_mode,
@@ -67,20 +79,69 @@ def run_batch_tasks(
                     "rag_top_k": int(task.get("top_k", 5)),
                 },
                 settings=resolved_settings,
-                thread_id=f"batch-{task_id}",
+                thread_id=thread_id,
             )
+            output_file = str(result.get("output_path") or "")
             success += 1
-            results.append({"id": task_id, "status": "success", "result": result})
+            task_reports.append(
+                {
+                    "id": task_id,
+                    "status": "success",
+                    "output_file": output_file,
+                    "error_message": "",
+                    "duration_seconds": time.perf_counter() - started,
+                    "thread_id": thread_id,
+                }
+            )
         except Exception as exc:
             failure += 1
-            results.append({"id": task_id, "status": "failed", "error": str(exc)})
-    return {"success": success, "failure": failure, "results": results}
+            failed_tasks.append(task)
+            task_reports.append(
+                {
+                    "id": task_id,
+                    "status": "failed",
+                    "output_file": "",
+                    "error_message": str(exc),
+                    "duration_seconds": time.perf_counter() - started,
+                    "thread_id": thread_id,
+                }
+            )
+    report = {
+        "run_id": resolved_run_id,
+        "started_at": started_at,
+        "finished_at": utc_now(),
+        "total_tasks": len(tasks),
+        "success_count": success,
+        "failed_count": failure,
+        "skipped_count": 0,
+        "tasks": task_reports,
+    }
+    write_json(run_dir / "batch_report.json", report)
+    write_failed_tasks(run_dir / "failed_tasks.jsonl", failed_tasks)
+    write_json(
+        run_dir / "run_config.json",
+        {
+            "tasks_path": str(tasks_path),
+            "rag_mode": rag_mode,
+            "collection": collection,
+            "output_format": output_format,
+        },
+    )
+    return {
+        "run_id": resolved_run_id,
+        "run_dir": str(run_dir),
+        "success": success,
+        "failure": failure,
+        "results": task_reports,
+    }
 
 
 def evaluate_batch_directory(input_dir: Path | str) -> dict[str, Any]:
     """Evaluate all markdown files in a directory and summarize metrics."""
 
-    markdown_files = sorted(Path(input_dir).glob("*.md"))
+    root = Path(input_dir)
+    search_dir = root / "task_outputs" if (root / "task_outputs").exists() else root
+    markdown_files = sorted(search_dir.glob("*.md"))
     evaluations = [evaluate_markdown(path) for path in markdown_files]
     count = len(evaluations)
     if count == 0:

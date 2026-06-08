@@ -534,7 +534,46 @@ def batch_run(
     console.print(table)
     for item in result["results"]:
         if item["status"] == "failed":
-            console.print(f"[red]{item['id']} failed:[/red] {item['error']}")
+            console.print(f"[red]{item['id']} failed:[/red] {item['error_message']}")
+
+
+@app.command("batch-rerun-failed")
+def batch_rerun_failed(
+    failed_tasks: Annotated[
+        Path,
+        typer.Option("--failed-tasks", exists=True, file_okay=True, dir_okay=False),
+    ],
+    output_dir: Annotated[Path, typer.Option("--output-dir", help="New batch output directory.")],
+    rag_mode: Annotated[str, typer.Option("--rag-mode", help="keyword, vector, or hybrid.")] = (
+        "hybrid"
+    ),
+    collection: Annotated[
+        str,
+        typer.Option("--collection", help="Chroma collection name."),
+    ] = "",
+    output_format: Annotated[
+        str,
+        typer.Option("--output-format", help="markdown, docx, or both."),
+    ] = "markdown",
+) -> None:
+    """Rerun failed tasks from a failed_tasks.jsonl file."""
+
+    result = run_batch_tasks(
+        failed_tasks,
+        output_dir=output_dir,
+        rag_mode=rag_mode,
+        collection=collection,
+        output_format=output_format,
+        settings=get_settings(),
+    )
+    console.print(
+        {
+            "run_id": result["run_id"],
+            "success": result["success"],
+            "failure": result["failure"],
+            "run_dir": result["run_dir"],
+        }
+    )
 
 
 @app.command("batch-evaluate")
