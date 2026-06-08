@@ -57,6 +57,15 @@ class SourceNote(BaseModel):
     full_text: str
 
 
+class DocumentChunk(BaseModel):
+    """A retrievable source chunk."""
+
+    source_path: str
+    chunk_id: str
+    title: str
+    text: str
+
+
 class SectionDraft(BaseModel):
     """Generated draft for a planned section."""
 

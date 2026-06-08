@@ -20,6 +20,8 @@ from writing_agent.prompts.editor import build_editor_prompt
 from writing_agent.prompts.planner import build_planner_prompt
 from writing_agent.prompts.reviewer import build_reviewer_prompt
 from writing_agent.prompts.writer import build_writer_prompt
+from writing_agent.rag.index import build_local_index
+from writing_agent.rag.retriever import retrieve
 from writing_agent.tools.document_loader import load_sources
 from writing_agent.tools.export import export_docx, export_markdown
 
@@ -84,6 +86,21 @@ def _source_summary(notes: list[SourceNote], max_chars: int = 6000) -> str:
     parts = [
         f"[{index}] {note.title}\nPath: {note.path}\nPreview: {note.content_preview}"
         for index, note in enumerate(notes, start=1)
+    ]
+    return "\n\n".join(parts)[:max_chars]
+
+
+def _chunk_summary(chunks: list[Any], max_chars: int = 6000) -> str:
+    if not chunks:
+        return "No relevant source chunks were retrieved. 本节资料依据不足。"
+    parts = [
+        (
+            f"[{chunk.chunk_id}]\n"
+            f"Source: {chunk.source_path}\n"
+            f"Title: {chunk.title}\n"
+            f"Text: {chunk.text}"
+        )
+        for chunk in chunks
     ]
     return "\n\n".join(parts)[:max_chars]
 
@@ -302,29 +319,41 @@ def write_sections_node(state: WritingState) -> WritingState:
     request = _request_from_state(state)
     plan = _plan_from_state(state)
     notes = _source_notes_from_state(state)
+    rag_enabled = bool(state.get("rag_enabled", True))
+    top_k = int(state.get("rag_top_k", 5))
+    chunks = build_local_index(notes) if rag_enabled else []
     source_summary = _source_summary(notes)
     drafts: list[SectionDraft] = []
     errors = _errors(state)
 
     for section in plan.sections:
+        query = " ".join([section.goal, *section.key_points, *section.evidence_needed])
+        retrieved_chunks = retrieve(query, chunks, top_k=top_k) if rag_enabled else []
+        section_sources = _chunk_summary(retrieved_chunks) if rag_enabled else source_summary
         if not _use_llm(state):
-            source_line = (
-                "Available source previews were considered."
-                if notes
-                else "Evidence note: insufficient evidence from local sources."
+            evidence_line = (
+                "Relevant local evidence was retrieved."
+                if retrieved_chunks
+                else "本节资料依据不足。"
+            )
+            references = (
+                "\n".join(f"- {chunk.chunk_id} ({chunk.source_path})" for chunk in retrieved_chunks)
+                if retrieved_chunks
+                else "- 本节资料依据不足"
             )
             content = (
                 f"## {section.title}\n\n"
                 f"{section.goal}\n\n"
                 f"Key points: {', '.join(section.key_points) or 'to be refined'}.\n\n"
-                f"{source_line}\n"
+                f"{evidence_line}\n\n"
+                f"### 参考依据\n\n{references}\n"
             )
         else:
             try:
                 messages = build_writer_prompt(
                     _request_summary(request),
                     section.model_dump_json(indent=2),
-                    source_summary,
+                    section_sources,
                 )
                 content = _invoke_model(messages)
             except Exception as exc:
@@ -338,7 +367,7 @@ def write_sections_node(state: WritingState) -> WritingState:
             SectionDraft(
                 title=section.title,
                 content=content,
-                citations=[note.path for note in notes if note.content_preview],
+                citations=[chunk.chunk_id for chunk in retrieved_chunks],
                 revision_notes=[],
             )
         )
@@ -355,21 +384,46 @@ def review_document_node(state: WritingState) -> WritingState:
     errors = _errors(state)
 
     if not _use_llm(state):
+        findings: list[ReviewFinding] = []
+        if "依据不足" in draft_markdown or "insufficient evidence" in draft_markdown.lower():
+            findings.append(
+                ReviewFinding(
+                    issue_type="evidence_gap",
+                    severity="medium",
+                    location="document",
+                    comment="Some sections explicitly report insufficient evidence.",
+                    suggestion="Add local sources or keep evidence-gap notes visible.",
+                )
+            )
+        if not findings:
+            findings.append(
+                ReviewFinding(
+                    issue_type="offline_review",
+                    severity="low",
+                    location="document",
+                    comment="Offline smoke path did not run model-based claim review.",
+                    suggestion="Run with a configured LLM before production use.",
+                )
+            )
+        return {"review_findings": findings, "current_step": "review_document", "errors": errors}
+
+    if "依据不足" in draft_markdown or "insufficient evidence" in draft_markdown.lower():
         findings = [
             ReviewFinding(
                 issue_type="evidence_gap",
                 severity="medium",
-                location="document",
-                comment="Offline smoke path cannot verify evidence coverage.",
-                suggestion="Review source coverage before production use.",
+                location="sections",
+                comment="The draft contains explicit insufficient-evidence markers.",
+                suggestion="Add sources or keep the markers instead of making unsupported claims.",
             )
         ]
-        return {"review_findings": findings, "current_step": "review_document", "errors": errors}
+    else:
+        findings = []
 
     try:
         text = _invoke_model(build_reviewer_prompt(_request_summary(request), draft_markdown))
         raw_findings = json.loads(_extract_json(text))
-        findings = [ReviewFinding.model_validate(item) for item in raw_findings]
+        findings.extend(ReviewFinding.model_validate(item) for item in raw_findings)
     except Exception as exc:
         errors.append(str(exc))
         findings = [

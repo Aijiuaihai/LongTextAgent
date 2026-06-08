@@ -30,5 +30,7 @@ Available source notes:
 {source_summary}
 
 Return markdown content for this section only.
+End the section with a "参考依据" list using the provided chunk ids. If no
+relevant source chunks are available, write "本节资料依据不足".
 """.strip()
     return [("system", WRITER_SYSTEM_PROMPT), ("user", user_prompt)]

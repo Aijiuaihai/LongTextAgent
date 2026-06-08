@@ -8,6 +8,11 @@ from writing_agent.models import WritingRequest
 def test_workflow_smoke_exports_markdown(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     Path("outputs").mkdir()
+    source_path = tmp_path / "source.md"
+    source_path.write_text(
+        "Smart forestry requires sensor deployment and patrol workflows.",
+        encoding="utf-8",
+    )
 
     request = WritingRequest(
         topic="Smart forestry management proposal",
@@ -15,13 +20,16 @@ def test_workflow_smoke_exports_markdown(tmp_path, monkeypatch) -> None:
         audience="technical reviewers",
         target_length="3000 words",
         style="formal and concrete",
+        source_paths=[str(source_path)],
     )
 
     result = run_writing_workflow(request, checkpointer=False, use_llm=False)
 
     output_path = Path(result["output_path"])
     assert output_path.exists()
-    assert "Smart forestry management proposal" in output_path.read_text(encoding="utf-8")
+    markdown = output_path.read_text(encoding="utf-8")
+    assert "Smart forestry management proposal" in markdown
+    assert "参考依据" in markdown
     assert result["current_step"] == "export_document"
 
 

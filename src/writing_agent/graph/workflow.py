@@ -128,6 +128,8 @@ def run_writing_workflow(
     resolved_settings = settings or get_settings()
     state.setdefault("output_dir", str(resolved_settings.output_dir))
     state.setdefault("output_format", "markdown")
+    state.setdefault("rag_enabled", True)
+    state.setdefault("rag_top_k", 5)
     resolved_thread_id = thread_id or generate_thread_id()
     app = build_workflow(settings=resolved_settings, checkpointer=checkpointer)
     config = {"configurable": {"thread_id": resolved_thread_id}}

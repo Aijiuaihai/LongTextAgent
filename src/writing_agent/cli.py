@@ -130,6 +130,11 @@ def run(
         str | None,
         typer.Option("--thread-id", help="Checkpoint thread id. Auto-generated when omitted."),
     ] = None,
+    rag: Annotated[
+        bool,
+        typer.Option("--rag/--no-rag", help="Use minimal local RAG retrieval."),
+    ] = True,
+    top_k: Annotated[int, typer.Option("--top-k", help="Retrieved source chunks per section.")] = 5,
 ) -> None:
     """Run the long-form writing workflow."""
 
@@ -152,6 +157,8 @@ def run(
             "output_dir": str(settings.output_dir),
             "pause_after_outline": pause_after_outline,
             "pause_before_export": pause_before_export,
+            "rag_enabled": rag,
+            "rag_top_k": top_k,
         },
         settings=settings,
         thread_id=resolved_thread_id,

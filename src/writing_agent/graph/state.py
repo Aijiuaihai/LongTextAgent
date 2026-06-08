@@ -23,6 +23,8 @@ class WritingState(TypedDict, total=False):
     review_findings: list[ReviewFinding] | list[dict[str, str]]
     final_document: FinalDocument | dict[str, Any]
     human_review_notes: Any
+    rag_enabled: bool
+    rag_top_k: int
     output_path: str
     output_format: str
     output_dir: str
