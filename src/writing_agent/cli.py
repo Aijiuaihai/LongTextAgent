@@ -19,6 +19,10 @@ from writing_agent.evaluation.batch import (
     evaluate_batch_directory,
     run_batch_tasks,
 )
+from writing_agent.evaluation.compare import (
+    compare_baseline_summaries,
+    render_baseline_comparison,
+)
 from writing_agent.evaluation.evaluator import evaluate_markdown
 from writing_agent.evaluation.llm_judge import judge_document_with_llm
 from writing_agent.graph.workflow import (
@@ -811,6 +815,58 @@ def baseline_run(
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     console.print(f"[green]Baseline summary:[/green] {summary_path}")
     console.print(summary)
+
+
+@app.command("baseline-compare")
+def baseline_compare(
+    base: Annotated[
+        Path,
+        typer.Option("--base", exists=True, file_okay=True, dir_okay=False),
+    ],
+    candidate: Annotated[
+        Path,
+        typer.Option("--candidate", exists=True, file_okay=True, dir_okay=False),
+    ],
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print JSON output."),
+    ] = False,
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", help="Optional JSON report path."),
+    ] = None,
+    fail_on_regression: Annotated[
+        bool,
+        typer.Option("--fail-on-regression", help="Exit nonzero on fail-level regression."),
+    ] = False,
+) -> None:
+    """Compare two baseline_summary.json files."""
+
+    result = compare_baseline_summaries(base, candidate)
+    payload = render_baseline_comparison(result)
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        console.print(f"[green]Wrote baseline comparison:[/green] {output}")
+    if json_output:
+        console.print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        table = Table(title="Baseline Compare")
+        table.add_column("metric")
+        table.add_column("value")
+        table.add_row("status", result.status)
+        table.add_row("delta_rule_score", f"{result.delta_rule_score:.4f}")
+        table.add_row("delta_citation_valid_rate", f"{result.delta_citation_valid_rate:.4f}")
+        table.add_row(
+            "delta_insufficient_evidence_count",
+            f"{result.delta_insufficient_evidence_count:.4f}",
+        )
+        table.add_row("regression_flags", str(len(result.regression_flags)))
+        console.print(table)
+        for flag in result.regression_flags:
+            console.print(f"[yellow]{flag.severity}[/yellow] {flag.metric}: {flag.message}")
+    if fail_on_regression and result.status == "fail":
+        raise typer.Exit(code=1)
 
 
 @app.command("batch-rerun-failed")
