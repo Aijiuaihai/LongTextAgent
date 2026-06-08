@@ -22,6 +22,7 @@ build/
 outputs/*
 !outputs/.gitkeep
 outputs/chroma/
+outputs/index_manifests/
 data/
 *.sqlite
 *.sqlite3

@@ -24,6 +24,13 @@ from writing_agent.graph.workflow import (
 )
 from writing_agent.llm import format_connection_help, get_chat_model
 from writing_agent.models import DocumentType, WritingRequest
+from writing_agent.rag.collections import (
+    delete_collection,
+    export_collection_manifest,
+    get_collection_stats,
+    list_collections,
+    rebuild_collection,
+)
 from writing_agent.rag.retriever import VectorRetriever
 from writing_agent.rag.vector_index import (
     add_documents_to_index,
@@ -35,6 +42,8 @@ from writing_agent.verification.report import citation_result_to_json, print_cit
 from writing_agent.verification.verifier import verify_citations_in_file
 
 app = typer.Typer(help="Long-form writing agent CLI.", no_args_is_help=True)
+collections_app = typer.Typer(help="Manage local Chroma collections.")
+app.add_typer(collections_app, name="collections")
 console = Console()
 
 
@@ -251,6 +260,73 @@ def retrieve_command(
             result.text[:160],
         )
     console.print(table)
+
+
+@collections_app.command("list")
+def collections_list() -> None:
+    """List known local collections."""
+
+    rows = list_collections(get_settings())
+    table = Table(title="Collections")
+    table.add_column("collection")
+    table.add_column("updated_at")
+    table.add_column("sources")
+    table.add_column("chunks")
+    for row in rows:
+        table.add_row(
+            str(row["collection_name"]),
+            str(row["updated_at"]),
+            str(row["source_count"]),
+            str(row["chunk_count"]),
+        )
+    console.print(table)
+
+
+@collections_app.command("stats")
+def collections_stats(
+    collection: Annotated[str, typer.Option("--collection", help="Collection name.")],
+) -> None:
+    """Show collection stats."""
+
+    stats = get_collection_stats(collection, get_settings())
+    console.print(stats)
+
+
+@collections_app.command("delete")
+def collections_delete(
+    collection: Annotated[str, typer.Option("--collection", help="Collection name.")],
+    yes: Annotated[bool, typer.Option("--yes", help="Skip confirmation.")] = False,
+) -> None:
+    """Delete a local collection manifest and best-effort persistence."""
+
+    if not yes and not typer.confirm(f"Delete collection {collection}?"):
+        console.print("[yellow]Cancelled.[/yellow]")
+        return
+    deleted = delete_collection(collection, get_settings())
+    message = f"[green]Deleted:[/green] {collection}" if deleted else "[yellow]Not found.[/yellow]"
+    console.print(message)
+
+
+@collections_app.command("rebuild")
+def collections_rebuild(
+    collection: Annotated[str, typer.Option("--collection", help="Collection name.")],
+    source: Annotated[list[str], typer.Option("--source", help="Source path. Can repeat.")],
+) -> None:
+    """Rebuild a local collection."""
+
+    stats = rebuild_collection(collection, source, get_settings())
+    console.print(stats)
+
+
+@collections_app.command("export-manifest")
+def collections_export_manifest(
+    collection: Annotated[str, typer.Option("--collection", help="Collection name.")],
+    output: Annotated[Path, typer.Option("--output", help="Manifest export path.")],
+) -> None:
+    """Export a collection manifest."""
+
+    path = export_collection_manifest(collection, output, get_settings())
+    console.print(f"[green]Exported manifest:[/green] {path}")
 
 
 def _load_review_file(path: Path) -> object:

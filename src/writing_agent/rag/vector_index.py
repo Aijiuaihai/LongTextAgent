@@ -7,6 +7,7 @@ from writing_agent.config import Settings, get_settings
 from writing_agent.models import SourceNote
 from writing_agent.rag.chunker import simple_chunk_text
 from writing_agent.rag.embeddings import get_embedding_model
+from writing_agent.rag.manifest import build_index_manifest, save_index_manifest
 from writing_agent.rag.models import DocumentChunk
 
 DEFAULT_COLLECTION = "writing_agent_sources"
@@ -106,6 +107,13 @@ def build_chroma_index(
             _chunks_to_documents(chunks),
             ids=[chunk.chunk_id for chunk in chunks],
         )
+    manifest = build_index_manifest(
+        collection_name=collection_name,
+        source_notes=source_notes,
+        chunks=chunks,
+        settings=settings,
+    )
+    save_index_manifest(manifest, settings=settings)
     return vector_store
 
 
