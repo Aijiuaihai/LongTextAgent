@@ -1,10 +1,12 @@
 """Typer CLI entrypoint."""
 
+import sys
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.table import Table
 
 from writing_agent.config import get_settings
 from writing_agent.graph.workflow import run_writing_workflow
@@ -38,6 +40,51 @@ Constraints:
 - Include staged workflow design
 - Identify risks and future RAG extension points
 """
+
+
+def build_doctor_report() -> dict[str, object]:
+    """Build a secret-safe environment diagnostics report."""
+
+    settings = get_settings()
+    python_version = ".".join(str(part) for part in sys.version_info[:3])
+    python_ok = sys.version_info >= (3, 11)
+    model_name = (
+        settings.ollama_model
+        if settings.llm_provider == "ollama"
+        else settings.openai_model
+    )
+    return {
+        "python_version": python_version,
+        "python_requires": ">=3.11",
+        "python_ok": python_ok,
+        "cwd": str(Path.cwd()),
+        "env_exists": Path(".env").exists(),
+        "output_dir": str(settings.output_dir),
+        "output_dir_exists": settings.output_dir.exists(),
+        "data_dir": str(settings.data_dir),
+        "data_dir_exists": settings.data_dir.exists(),
+        "checkpoint_db_path": str(settings.checkpoint_db_path),
+        "llm_provider": settings.llm_provider,
+        "model": model_name or "",
+    }
+
+
+@app.command()
+def doctor() -> None:
+    """Inspect local runtime configuration without printing secrets."""
+
+    report = build_doctor_report()
+    table = Table(title="Writing Agent Doctor")
+    table.add_column("Check")
+    table.add_column("Value")
+    for key, value in report.items():
+        table.add_row(key, str(value))
+    console.print(table)
+    if not report["python_ok"]:
+        console.print(
+            "[red]Python 3.11+ is required.[/red] "
+            "Create a 3.11 environment before installing the project."
+        )
 
 
 @app.command()

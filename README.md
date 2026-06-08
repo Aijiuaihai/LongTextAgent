@@ -37,8 +37,10 @@ Core modules:
 
 Use Python 3.11 or newer.
 
+On Linux or macOS:
+
 ```bash
-python -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -e ".[dev]"
@@ -47,7 +49,7 @@ python -m pip install -e ".[dev]"
 On Windows PowerShell:
 
 ```powershell
-python -m venv .venv
+py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -U pip
 python -m pip install -e ".[dev]"
@@ -59,6 +61,16 @@ Run checks:
 ruff check .
 pytest
 ```
+
+Check the active environment:
+
+```bash
+writing-agent doctor
+```
+
+`doctor` reports the Python version, current working directory, `.env` status,
+data/output directory status, checkpoint path, LLM provider, and configured
+model name. It never prints API keys.
 
 ## Environment
 
