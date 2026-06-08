@@ -1,0 +1,61 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "writing-agent"
+version = "0.1.0"
+description = "A LangChain and LangGraph based agent system for long-form report and plan writing."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+  { name = "LongTextAgent contributors" },
+]
+dependencies = [
+  "langchain>=0.3.0",
+  "langgraph>=0.2.0",
+  "langgraph-checkpoint-sqlite>=2.0.0",
+  "langchain-ollama>=0.2.0",
+  "langchain-openai>=0.2.0",
+  "langchain-community>=0.3.0",
+  "pydantic>=2.8.0",
+  "pydantic-settings>=2.4.0",
+  "python-dotenv>=1.0.1",
+  "typer>=0.12.0",
+  "rich>=13.7.0",
+  "python-docx>=1.1.2",
+  "pypdf>=4.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+  "ruff>=0.6.0",
+  "mypy>=1.11.0",
+]
+
+[project.scripts]
+writing-agent = "writing_agent.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/writing_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_ignores = true
+warn_return_any = true
+disallow_untyped_defs = true
+plugins = ["pydantic.mypy"]
+
