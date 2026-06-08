@@ -31,6 +31,8 @@ from writing_agent.rag.vector_index import (
     reset_chroma_index,
 )
 from writing_agent.tools.document_loader import load_sources
+from writing_agent.verification.report import citation_result_to_json, print_citation_report
+from writing_agent.verification.verifier import verify_citations_in_file
 
 app = typer.Typer(help="Long-form writing agent CLI.", no_args_is_help=True)
 console = Console()
@@ -346,6 +348,14 @@ def evaluate(
         bool,
         typer.Option("--llm-judge", help="Also run optional LLM judge evaluation."),
     ] = False,
+    verify_citations: Annotated[
+        bool,
+        typer.Option("--verify-citations", help="Verify source citations against index manifest."),
+    ] = False,
+    collection: Annotated[
+        str | None,
+        typer.Option("--collection", help="Collection name for citation verification."),
+    ] = None,
 ) -> None:
     """Evaluate a generated markdown document with rule-based metrics."""
 
@@ -353,6 +363,17 @@ def evaluate(
     result = {"rule_metrics": rule_metrics}
     if llm_judge:
         result["llm_judge"] = judge_document_with_llm(file, settings=get_settings())
+    if verify_citations:
+        citation_result = verify_citations_in_file(file, collection=collection)
+        result["citation_verification"] = citation_result.model_dump(mode="json")
+        rule_metrics.update(
+            {
+                "citation_total": citation_result.total_citations,
+                "citation_valid": citation_result.valid_citations,
+                "citation_invalid": citation_result.invalid_citations,
+                "citation_status": citation_result.overall_status,
+            }
+        )
     if json_output:
         console.print(json.dumps(result, ensure_ascii=False, indent=2))
         return
@@ -367,6 +388,32 @@ def evaluate(
     if llm_judge:
         console.print("[bold]LLM Judge[/bold]")
         console.print(result["llm_judge"])
+    if verify_citations:
+        print_citation_report(citation_result, console)
+
+
+@app.command("verify-citations")
+def verify_citations_command(
+    file: Annotated[
+        Path,
+        typer.Option("--file", exists=True, file_okay=True, dir_okay=False),
+    ],
+    collection: Annotated[
+        str | None,
+        typer.Option("--collection", help="Collection name for manifest lookup."),
+    ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print JSON instead of a Rich table."),
+    ] = False,
+) -> None:
+    """Verify source_path and chunk_id references in a markdown file."""
+
+    result = verify_citations_in_file(file, collection=collection)
+    if json_output:
+        console.print(citation_result_to_json(result))
+        return
+    print_citation_report(result, console)
 
 
 @app.command("batch-run")
