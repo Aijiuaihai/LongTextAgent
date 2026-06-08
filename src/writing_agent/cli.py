@@ -1,15 +1,24 @@
 """Typer CLI entrypoint."""
 
+import json
 import sys
+import time
 from pathlib import Path
 from typing import Annotated
+from urllib.error import URLError
+from urllib.request import urlopen
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
+from writing_agent.checkpoints import inspect_thread, list_threads
 from writing_agent.config import get_settings
-from writing_agent.graph.workflow import run_writing_workflow
+from writing_agent.graph.workflow import (
+    generate_thread_id,
+    resume_writing_workflow,
+    run_writing_workflow,
+)
 from writing_agent.llm import format_connection_help, get_chat_model
 from writing_agent.models import DocumentType, WritingRequest
 
@@ -117,6 +126,10 @@ def run(
         bool,
         typer.Option("--pause-before-export", help="Pause after final draft assembly."),
     ] = False,
+    thread_id: Annotated[
+        str | None,
+        typer.Option("--thread-id", help="Checkpoint thread id. Auto-generated when omitted."),
+    ] = None,
 ) -> None:
     """Run the long-form writing workflow."""
 
@@ -129,7 +142,9 @@ def run(
         style=style,
         source_paths=source or [],
     )
+    resolved_thread_id = thread_id or generate_thread_id()
     console.print("[bold]Starting writing workflow[/bold]")
+    console.print(f"[bold]thread_id:[/bold] {resolved_thread_id}")
     result = run_writing_workflow(
         {
             "request": request,
@@ -139,13 +154,102 @@ def run(
             "pause_before_export": pause_before_export,
         },
         settings=settings,
+        thread_id=resolved_thread_id,
     )
     for error in result.get("errors", []):
         console.print(f"[yellow]Warning:[/yellow] {error}")
     if result.get("awaiting_human_review"):
         console.print(f"[yellow]Paused for human review at:[/yellow] {result.get('current_step')}")
+        console.print("[bold]Next step:[/bold]")
+        console.print(
+            f"writing-agent resume --thread-id {resolved_thread_id} --review-file review.md"
+        )
+        if result.get("__interrupt__"):
+            console.print("[bold]Interrupt payload:[/bold]")
+            console.print(result["__interrupt__"])
     else:
         console.print(f"[green]Exported:[/green] {result.get('output_path')}")
+
+
+def _load_review_file(path: Path) -> object:
+    text = path.read_text(encoding="utf-8")
+    if path.suffix.lower() == ".json":
+        return json.loads(text)
+    stripped = text.strip()
+    if stripped.startswith("{") or stripped.startswith("["):
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            return text
+    return text
+
+
+@app.command()
+def resume(
+    thread_id: Annotated[str, typer.Option("--thread-id", help="Checkpoint thread id.")],
+    review_file: Annotated[
+        Path,
+        typer.Option("--review-file", exists=True, file_okay=True, dir_okay=False),
+    ],
+) -> None:
+    """Resume a workflow paused for human review."""
+
+    settings = get_settings()
+    review_payload = _load_review_file(review_file)
+    result = resume_writing_workflow(thread_id, review_payload, settings=settings)
+    for error in result.get("errors", []):
+        console.print(f"[yellow]Warning:[/yellow] {error}")
+    if result.get("awaiting_human_review"):
+        console.print(f"[yellow]Paused again at:[/yellow] {result.get('current_step')}")
+        console.print(f"writing-agent resume --thread-id {thread_id} --review-file review.md")
+    else:
+        console.print(f"[green]Resumed and exported:[/green] {result.get('output_path')}")
+
+
+@app.command()
+def threads() -> None:
+    """List known checkpoint threads."""
+
+    rows = list_threads(get_settings())
+    table = Table(title="Writing Threads")
+    table.add_column("thread_id")
+    table.add_column("updated_at")
+    table.add_column("current_step")
+    table.add_column("interrupted")
+    for row in rows:
+        table.add_row(
+            str(row.get("thread_id", "")),
+            str(row.get("updated_at", "")),
+            str(row.get("current_step", "")),
+            str(row.get("interrupted", "")),
+        )
+    console.print(table)
+
+
+@app.command("inspect")
+def inspect_command(
+    thread_id: Annotated[str, typer.Option("--thread-id", help="Checkpoint thread id.")],
+) -> None:
+    """Inspect a checkpoint thread summary."""
+
+    summary = inspect_thread(thread_id, get_settings())
+    if summary is None:
+        console.print(f"[red]No metadata found for thread:[/red] {thread_id}")
+        raise typer.Exit(code=1)
+    table = Table(title=f"Thread {thread_id}")
+    table.add_column("Field")
+    table.add_column("Value")
+    for key in [
+        "request_topic",
+        "current_step",
+        "interrupted",
+        "section_count",
+        "review_finding_count",
+        "final_document_exists",
+        "output_path",
+    ]:
+        table.add_row(key, str(summary.get(key, "")))
+    console.print(table)
 
 
 @app.command("init-example")
@@ -178,6 +282,20 @@ def check_model() -> None:
     settings = get_settings()
     console.print("[bold]Configuration[/bold]")
     console.print(settings.safe_summary())
+    if settings.llm_provider == "ollama":
+        try:
+            with urlopen(settings.ollama_base_url, timeout=5) as response:
+                console.print(
+                    f"[green]Ollama base URL reachable:[/green] "
+                    f"{settings.ollama_base_url} ({response.status})"
+                )
+        except (URLError, TimeoutError, ValueError) as exc:
+            console.print(f"[yellow]Ollama base URL check failed:[/yellow] {exc}")
+    elif settings.llm_provider == "openai_compatible" and not settings.openai_base_url:
+        console.print("[red]OPENAI_BASE_URL is required for openai_compatible provider.[/red]")
+        raise typer.Exit(code=1)
+
+    started_at = time.perf_counter()
     try:
         model = get_chat_model(settings)
         response = model.invoke("Reply with a short readiness confirmation.")
@@ -185,9 +303,25 @@ def check_model() -> None:
     except Exception as exc:
         console.print(f"[red]Model check failed:[/red] {exc}")
         console.print(format_connection_help(settings))
+        console.print("Troubleshooting:")
+        console.print("- Check whether `ollama serve` is running.")
+        console.print("- Check `ollama list` contains the configured model.")
+        console.print("- Check OLLAMA_BASE_URL, normally http://localhost:11434.")
+        console.print("- In Windows Docker setups, consider host.docker.internal.")
         raise typer.Exit(code=1) from exc
+    elapsed = time.perf_counter() - started_at
     console.print("[green]Model responded.[/green]")
-    console.print(str(content)[:500])
+    console.print(f"provider={settings.llm_provider}")
+    model_name = (
+        settings.ollama_model if settings.llm_provider == "ollama" else settings.openai_model
+    )
+    console.print(f"model={model_name}")
+    if settings.llm_provider == "ollama":
+        console.print(f"base_url={settings.ollama_base_url}")
+    elif settings.openai_base_url:
+        console.print(f"base_url={settings.openai_base_url}")
+    console.print(f"elapsed_seconds={elapsed:.2f}")
+    console.print(str(content)[:200])
 
 
 if __name__ == "__main__":

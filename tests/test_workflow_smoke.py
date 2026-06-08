@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from writing_agent.config import Settings
 from writing_agent.graph.workflow import run_writing_workflow
 from writing_agent.models import WritingRequest
 
@@ -28,6 +29,10 @@ def test_workflow_can_pause_after_outline(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     Path("outputs").mkdir()
 
+    settings = Settings(
+        output_dir=tmp_path / "outputs",
+        checkpoint_db_path=tmp_path / "outputs" / "checkpoints.sqlite",
+    )
     request = WritingRequest(topic="Outline review example")
 
     result = run_writing_workflow(
@@ -35,7 +40,8 @@ def test_workflow_can_pause_after_outline(tmp_path, monkeypatch) -> None:
             "request": request,
             "pause_after_outline": True,
         },
-        checkpointer=False,
+        settings=settings,
+        thread_id="outline-pause",
         use_llm=False,
     )
 

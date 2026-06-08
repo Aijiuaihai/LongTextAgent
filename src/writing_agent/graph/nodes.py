@@ -183,6 +183,50 @@ def _fallback_plan(request: WritingRequest, notes: list[SourceNote]) -> WritingP
     )
 
 
+def _human_review_payload(state: WritingState, step: str) -> Any:
+    """Pause for human review and return resume payload."""
+
+    try:
+        from langgraph.types import interrupt
+    except ImportError as exc:  # pragma: no cover - dependency guard
+        raise RuntimeError("Install langgraph to use human review interrupts.") from exc
+
+    if step == "outline":
+        plan = _plan_from_state(state)
+        payload = {
+            "step": "outline",
+            "message": "Review the generated outline and provide edits or approval notes.",
+            "current_outline": plan.model_dump(mode="json"),
+            "expected_review_format": (
+                "Markdown notes or JSON, for example "
+                '{"approved": true, "notes": "Add deployment risk section."}'
+            ),
+        }
+    else:
+        final = state["final_document"]
+        document = (
+            final if isinstance(final, FinalDocument) else FinalDocument.model_validate(final)
+        )
+        payload = {
+            "step": "final_draft",
+            "message": "Review the assembled final draft and provide final edit notes.",
+            "current_draft": document.markdown,
+            "expected_review_format": (
+                "Markdown notes or JSON, for example "
+                '{"approved": true, "notes": "Tighten conclusion."}'
+            ),
+        }
+    return interrupt(payload)
+
+
+def _review_text(review: Any) -> str:
+    if review is None:
+        return ""
+    if isinstance(review, str):
+        return review
+    return json.dumps(review, ensure_ascii=False)
+
+
 def parse_request_node(state: WritingState) -> WritingState:
     """Normalize the incoming request."""
 
@@ -213,12 +257,11 @@ def plan_outline_node(state: WritingState) -> WritingState:
 
     request = _request_from_state(state)
     notes = _source_notes_from_state(state)
-    awaiting_review = bool(state.get("pause_after_outline", False))
     if not _use_llm(state):
         return {
             "plan": _fallback_plan(request, notes),
             "current_step": "plan_outline",
-            "awaiting_human_review": awaiting_review,
+            "awaiting_human_review": False,
         }
 
     messages = build_planner_prompt(_request_summary(request), _source_summary(notes))
@@ -228,15 +271,29 @@ def plan_outline_node(state: WritingState) -> WritingState:
             "plan": plan,
             "current_step": "plan_outline",
             "errors": _errors(state),
-            "awaiting_human_review": awaiting_review,
+            "awaiting_human_review": False,
         }
     except Exception as exc:
         return {
             "plan": _fallback_plan(request, notes),
             "current_step": "plan_outline",
             "errors": [*_errors(state), str(exc)],
-            "awaiting_human_review": awaiting_review,
+            "awaiting_human_review": False,
         }
+
+
+def outline_review_node(state: WritingState) -> WritingState:
+    """Interrupt for outline review and store human feedback on resume."""
+
+    plan = _plan_from_state(state)
+    review = _human_review_payload(state, "outline")
+    plan.risks.append(f"Human outline review: {_review_text(review)}")
+    return {
+        "plan": plan,
+        "current_step": "outline_review",
+        "awaiting_human_review": False,
+        "human_review_notes": review,
+    }
 
 
 def write_sections_node(state: WritingState) -> WritingState:
@@ -398,7 +455,23 @@ def assemble_document_node(state: WritingState) -> WritingState:
         "final_document": final,
         "current_step": "assemble_document",
         "errors": _errors(state),
-        "awaiting_human_review": bool(state.get("pause_before_export", False)),
+        "awaiting_human_review": False,
+        "human_review_notes": state.get("human_review_notes"),
+    }
+
+
+def final_review_node(state: WritingState) -> WritingState:
+    """Interrupt for final draft review and store human feedback on resume."""
+
+    final = state["final_document"]
+    document = final if isinstance(final, FinalDocument) else FinalDocument.model_validate(final)
+    review = _human_review_payload({**state, "final_document": document}, "final_draft")
+    document.metadata["human_final_review"] = review
+    return {
+        "final_document": document,
+        "current_step": "final_review",
+        "awaiting_human_review": False,
+        "human_review_notes": review,
     }
 
 

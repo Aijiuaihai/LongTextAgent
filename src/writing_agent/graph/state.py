@@ -22,6 +22,7 @@ class WritingState(TypedDict, total=False):
     section_drafts: list[SectionDraft] | list[dict[str, Any]]
     review_findings: list[ReviewFinding] | list[dict[str, str]]
     final_document: FinalDocument | dict[str, Any]
+    human_review_notes: Any
     output_path: str
     output_format: str
     output_dir: str
