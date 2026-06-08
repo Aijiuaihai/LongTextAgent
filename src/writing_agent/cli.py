@@ -150,6 +150,26 @@ def trace_check() -> None:
     console.print(build_trace_check_report())
 
 
+@app.command("serve")
+def serve(
+    host: Annotated[str, typer.Option("--host", help="Bind host.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", help="Bind port.")] = 8000,
+    reload: Annotated[
+        bool,
+        typer.Option("--reload", help="Enable uvicorn reload for local development."),
+    ] = False,
+) -> None:
+    """Start the simple web frontend."""
+
+    try:
+        import uvicorn
+    except ImportError as exc:  # pragma: no cover - dependency guard
+        console.print("[red]Install the web dependencies with `python -m pip install -e .`.[/red]")
+        raise typer.Exit(code=1) from exc
+    console.print(f"[green]Serving LongTextAgent:[/green] http://{host}:{port}")
+    uvicorn.run("writing_agent.web.app:app", host=host, port=port, reload=reload)
+
+
 @app.command()
 def run(
     topic: Annotated[str, typer.Option("--topic", help="Writing topic.")],

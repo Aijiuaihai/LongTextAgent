@@ -85,6 +85,36 @@ For Ollama on Windows, `OLLAMA_BASE_URL` is normally
 `host.docker.internal` may be needed. If model checks fail, run `ollama serve`
 and `ollama list`.
 
+## Simple Web Frontend
+
+Start the local web UI:
+
+```bash
+writing-agent serve --host 127.0.0.1 --port 8000
+```
+
+If the console script has not been installed in the current shell, run from the
+repository root:
+
+```powershell
+$env:PYTHONPATH="src"
+python -m writing_agent.cli serve --host 127.0.0.1 --port 8000
+```
+
+Open `http://127.0.0.1:8000`. The page supports:
+
+- typing a writing requirement directly;
+- uploading one requirement document (`.md`, `.txt`, `.docx`, `.pdf`);
+- uploading multiple local source documents for RAG;
+- choosing document type, audience, length, style, output format, RAG mode, and
+  collection;
+- running the existing LangGraph writing workflow and showing `thread_id` plus
+  exported file paths.
+
+For quick UI smoke tests without a real model, uncheck `调用真实 LLM`. Production
+quality generation should keep it checked and use `writing-agent check-model`
+first.
+
 ## Chroma Vector RAG
 
 Build or reset a persistent local Chroma collection:

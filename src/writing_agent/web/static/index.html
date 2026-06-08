@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LongTextAgent</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <h1>LongTextAgent</h1>
+          <p id="configLine">正在读取模型配置...</p>
+        </div>
+        <div class="status-pill" id="runState">待生成</div>
+      </header>
+
+      <section class="workspace">
+        <form id="generateForm" class="editor-panel">
+          <div class="field-row">
+            <label>
+              写作主题
+              <input
+                name="topic"
+                placeholder="例如：智慧林务系统建设计划书"
+                autocomplete="off"
+              />
+            </label>
+            <label>
+              文档类型
+              <select name="type">
+                <option value="proposal">计划书 / 立项书</option>
+                <option value="report">报告</option>
+                <option value="plan">项目计划</option>
+                <option value="weekly_report">周报</option>
+                <option value="research_summary">研究方案 / 综述</option>
+                <option value="custom">自定义</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="field-row">
+            <label>
+              目标受众
+              <input name="audience" value="项目负责人和技术评审" />
+            </label>
+            <label>
+              篇幅
+              <input name="length" value="5000字" />
+            </label>
+          </div>
+
+          <label>
+            写作风格
+            <input name="style" value="正式、技术导向、少空话" />
+          </label>
+
+          <label>
+            需求说明
+            <textarea
+              name="request_text"
+              rows="9"
+              placeholder="输入报告目标、约束、必须包含的章节、格式要求、资料使用要求等。也可以只上传需求文档。"
+            ></textarea>
+          </label>
+
+          <div class="upload-grid">
+            <label class="upload-box">
+              上传需求文档
+              <input name="request_file" type="file" accept=".md,.txt,.docx,.pdf" />
+              <span>支持 md / txt / docx / pdf</span>
+            </label>
+            <label class="upload-box">
+              上传参考资料
+              <input
+                name="source_files"
+                type="file"
+                accept=".md,.txt,.docx,.pdf"
+                multiple
+              />
+              <span>可多选，作为 RAG 资料来源</span>
+            </label>
+          </div>
+
+          <div class="options-grid">
+            <label>
+              输出格式
+              <select name="output_format">
+                <option value="markdown">Markdown</option>
+                <option value="docx">Word docx</option>
+                <option value="both">Markdown + docx</option>
+              </select>
+            </label>
+            <label>
+              RAG 模式
+              <select name="rag_mode">
+                <option value="hybrid">Hybrid</option>
+                <option value="vector">Vector</option>
+                <option value="keyword">Keyword</option>
+              </select>
+            </label>
+            <label>
+              Collection
+              <input name="collection" placeholder="例如 forestry_demo，可留空" />
+            </label>
+            <label>
+              Top K
+              <input name="top_k" type="number" value="5" min="1" max="12" />
+            </label>
+          </div>
+
+          <div class="toggle-row">
+            <label><input name="rag" type="checkbox" checked /> 启用 RAG</label>
+            <label><input name="use_llm" type="checkbox" checked /> 调用真实 LLM</label>
+          </div>
+
+          <button type="submit" id="submitButton">生成长文本报告</button>
+        </form>
+
+        <aside class="result-panel">
+          <h2>生成结果</h2>
+          <div class="result-box" id="resultBox">
+            <p>提交后会在这里显示 thread_id、输出文件路径和错误提示。</p>
+          </div>
+        </aside>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
