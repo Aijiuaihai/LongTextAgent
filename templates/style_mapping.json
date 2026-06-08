@@ -1,0 +1,9 @@
+{
+  "markdown_h1": "Heading 1",
+  "markdown_h2": "Heading 2",
+  "markdown_h3": "Heading 3",
+  "paragraph": "Normal",
+  "bullet": "List Bullet",
+  "numbered": "List Number",
+  "table": "Table Grid"
+}

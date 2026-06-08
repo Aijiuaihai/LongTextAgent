@@ -140,3 +140,37 @@ def export_docx(
     markdown_to_docx(markdown, document)
     document.save(str(output_path))
     return output_path
+
+
+def export_docx_from_template(
+    markdown: str,
+    *,
+    template_path: Path | str,
+    output_dir: Path | str = "./outputs",
+    title: str = "document",
+    metadata: dict[str, Any] | None = None,
+) -> tuple[Path, list[str]]:
+    """Export docx using a user-provided template."""
+
+    from writing_agent.tools.docx_template import render_docx_template
+
+    metadata = metadata or {}
+    generated_at = metadata.get("generated_at") or datetime.now().isoformat(timespec="seconds")
+    output_path = Path(output_dir) / f"{_timestamp()}-{_slugify(title)}.docx"
+    values = {
+        "title": title,
+        "topic": metadata.get("topic", title),
+        "document_type": metadata.get("document_type", ""),
+        "audience": metadata.get("audience", ""),
+        "generated_at": generated_at,
+        "model_name": metadata.get("model_name", ""),
+        "rag_mode": metadata.get("rag_mode", ""),
+        "collection": metadata.get("collection", ""),
+        "thread_id": metadata.get("thread_id", ""),
+    }
+    return render_docx_template(
+        template_path=template_path,
+        output_path=output_path,
+        markdown=markdown,
+        values=values,
+    )

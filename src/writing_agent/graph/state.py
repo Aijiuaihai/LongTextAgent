@@ -32,6 +32,7 @@ class WritingState(TypedDict, total=False):
     output_paths: dict[str, str]
     output_format: str
     output_dir: str
+    docx_template: str
     thread_id: str
     use_llm: bool
     pause_after_outline: bool

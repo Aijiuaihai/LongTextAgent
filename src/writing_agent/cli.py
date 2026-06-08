@@ -137,6 +137,10 @@ def run(
         str,
         typer.Option("--output-format", help="markdown, docx, or both."),
     ] = "markdown",
+    docx_template: Annotated[
+        Path | None,
+        typer.Option("--docx-template", help="Optional .docx template path."),
+    ] = None,
     pause_after_outline: Annotated[
         bool,
         typer.Option("--pause-after-outline", help="Pause after outline planning."),
@@ -186,6 +190,7 @@ def run(
             "request": request,
             "output_format": output_format,
             "output_dir": str(settings.output_dir),
+            "docx_template": str(docx_template) if docx_template else "",
             "pause_after_outline": pause_after_outline,
             "pause_before_export": pause_before_export,
             "rag_enabled": rag,

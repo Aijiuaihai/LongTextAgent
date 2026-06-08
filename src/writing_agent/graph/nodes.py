@@ -25,7 +25,7 @@ from writing_agent.rag.index import build_local_index
 from writing_agent.rag.retriever import HybridRetriever, VectorRetriever, retrieve
 from writing_agent.rag.vector_index import build_chroma_index, load_chroma_index
 from writing_agent.tools.document_loader import load_sources
-from writing_agent.tools.export import export_docx, export_markdown
+from writing_agent.tools.export import export_docx, export_docx_from_template, export_markdown
 
 
 def _errors(state: WritingState) -> list[str]:
@@ -602,6 +602,8 @@ def export_document_node(state: WritingState) -> WritingState:
     final = value if isinstance(value, FinalDocument) else FinalDocument.model_validate(value)
     output_dir = state.get("output_dir", "./outputs")
     output_format = state.get("output_format", "markdown")
+    docx_template = str(state.get("docx_template", "") or "")
+    errors = _errors(state)
     settings = get_settings()
     metadata = {
         **final.metadata,
@@ -614,12 +616,22 @@ def export_document_node(state: WritingState) -> WritingState:
             path = export_markdown(final.markdown, output_dir=output_dir, title=final.title)
             output_paths = {"markdown": str(path)}
         elif output_format == "docx":
-            path = export_docx(
-                final.markdown,
-                output_dir=output_dir,
-                title=final.title,
-                metadata=metadata,
-            )
+            if docx_template:
+                path, warnings = export_docx_from_template(
+                    final.markdown,
+                    template_path=docx_template,
+                    output_dir=output_dir,
+                    title=final.title,
+                    metadata=metadata,
+                )
+                errors.extend(warnings)
+            else:
+                path = export_docx(
+                    final.markdown,
+                    output_dir=output_dir,
+                    title=final.title,
+                    metadata=metadata,
+                )
             output_paths = {"docx": str(path)}
         elif output_format == "both":
             markdown_path = export_markdown(
@@ -627,12 +639,22 @@ def export_document_node(state: WritingState) -> WritingState:
                 output_dir=output_dir,
                 title=final.title,
             )
-            docx_path = export_docx(
-                final.markdown,
-                output_dir=output_dir,
-                title=final.title,
-                metadata=metadata,
-            )
+            if docx_template:
+                docx_path, warnings = export_docx_from_template(
+                    final.markdown,
+                    template_path=docx_template,
+                    output_dir=output_dir,
+                    title=final.title,
+                    metadata=metadata,
+                )
+                errors.extend(warnings)
+            else:
+                docx_path = export_docx(
+                    final.markdown,
+                    output_dir=output_dir,
+                    title=final.title,
+                    metadata=metadata,
+                )
             path = markdown_path
             output_paths = {"markdown": str(markdown_path), "docx": str(docx_path)}
         else:
@@ -641,7 +663,7 @@ def export_document_node(state: WritingState) -> WritingState:
             "output_path": str(path),
             "output_paths": output_paths,
             "current_step": "export_document",
-            "errors": _errors(state),
+            "errors": errors,
         }
     except Exception as exc:
         return {"current_step": "export_document", "errors": [*_errors(state), str(exc)]}
