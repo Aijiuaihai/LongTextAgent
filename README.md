@@ -1,60 +1,40 @@
 # LongTextAgent
 
-LongTextAgent is a Python 3.11+ LangChain and LangGraph agent system for
-long-form reports, project proposals, research plans, weekly reports, and
-structured planning documents.
-
-It is not a single-turn chatbot. The workflow parses the writing request, loads
-local sources, plans an outline, writes section by section, reviews consistency,
-revises, assembles, and exports the final document. LangGraph checkpoints allow
-long tasks to pause and resume by `thread_id`.
-
-## Architecture
+LongTextAgent is a Python 3.11+ LangChain and LangGraph system for generating
+long-form reports, project proposals, plans, research summaries, and weekly
+reports. It uses a staged workflow: request parsing, source loading, RAG
+retrieval, outline planning, section writing, review, revision, assembly, export,
+checkpointing, and optional human review resume.
 
 ```mermaid
 flowchart LR
     request["request"] --> parse["parse"]
     parse --> source["source loading"]
-    source --> rag["local RAG retrieval"]
+    source --> rag["Chroma / keyword / hybrid RAG"]
     rag --> outline["outline"]
     outline --> writing["section writing"]
     writing --> review["review"]
     review --> revise["revise"]
     revise --> assemble["assemble"]
-    assemble --> export["export"]
+    assemble --> export["markdown / docx export"]
 ```
 
-Core modules:
-
-- `writing_agent.config`: environment-driven settings with secret-safe summaries.
-- `writing_agent.llm`: Ollama, OpenAI-compatible, and OpenAI chat model adapters.
-- `writing_agent.models`: Pydantic contracts for requests, plans, drafts, sources, and output.
-- `writing_agent.graph`: LangGraph state, interrupt nodes, workflow assembly, and resume helpers.
-- `writing_agent.checkpoints`: SQLite checkpointer creation and thread metadata.
-- `writing_agent.rag`: minimal local chunking, in-memory indexing, and term-overlap retrieval.
-- `writing_agent.evaluation`: deterministic quality metrics for generated markdown.
-- `writing_agent.tools`: local document loading and markdown/docx export helpers.
-- `writing_agent.cli`: Typer command line interface.
-
-## Python 3.11 Environment
-
-Use Python 3.11 or newer. The project intentionally declares
-`requires-python = ">=3.11"`.
-
-Linux or macOS:
-
-```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-python -m pip install -U pip
-python -m pip install -e ".[dev]"
-```
+## Install
 
 Windows PowerShell:
 
 ```powershell
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
+python -m pip install -U pip
+python -m pip install -e ".[dev]"
+```
+
+Linux or macOS:
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -e ".[dev]"
 ```
@@ -68,7 +48,7 @@ pytest
 
 ## Environment
 
-Copy `.env.example` to `.env` and edit values as needed. Do not commit `.env`.
+Copy `.env.example` to `.env`. Do not commit `.env`.
 
 ```env
 LLM_PROVIDER=ollama
@@ -87,178 +67,158 @@ OUTPUT_DIR=./outputs
 CHECKPOINT_DB_PATH=./outputs/checkpoints.sqlite
 ```
 
-`LLM_PROVIDER` values:
-
-- `ollama`: uses `langchain_ollama.ChatOllama`.
-- `openai_compatible`: uses `langchain_openai.ChatOpenAI` with `OPENAI_BASE_URL`.
-- `openai`: uses `langchain_openai.ChatOpenAI`.
-
-API keys are never hardcoded, and `.gitignore` excludes `.env`, local data,
-checkpoints, generated outputs, and cache directories.
-
-## Doctor
+`doctor` checks Python version, paths, provider, model name, and secret-safe
+configuration:
 
 ```bash
 writing-agent doctor
 ```
 
-`doctor` prints the active Python version, whether Python 3.11+ is satisfied,
-current working directory, `.env` status, data/output directory status,
-checkpoint path, LLM provider, and model name. It does not print API keys.
-
-## Ollama Model Check
-
-Start Ollama and ensure the configured models exist:
-
-```bash
-ollama serve
-ollama pull qwen3.6:35b
-ollama pull qwen3-embedding:8b
-```
-
-Check the configured model:
+Check Ollama or OpenAI-compatible model connectivity:
 
 ```bash
 writing-agent check-model
 ```
 
-For Ollama, this checks `OLLAMA_BASE_URL`, calls `ChatOllama`, and prints model
-name, base URL, elapsed time, and the first 200 response characters.
+For Ollama on Windows, `OLLAMA_BASE_URL` is normally
+`http://localhost:11434`. In Docker-to-Windows-host scenarios,
+`host.docker.internal` may be needed. If model checks fail, run `ollama serve`
+and `ollama list`.
 
-Windows and Docker notes:
+## Chroma Vector RAG
 
-- Local Windows Ollama normally uses `http://localhost:11434`.
-- In a container calling a Windows host service, `host.docker.internal` may be required.
-- If the check fails, run `ollama list` and confirm `OLLAMA_MODEL` exists.
-
-## Run A Writing Workflow
+Build or reset a persistent local Chroma collection:
 
 ```bash
-writing-agent run \
-  --topic "智慧林务系统建设计划书" \
-  --type proposal \
-  --audience "项目负责人和技术评审" \
-  --length "5000字" \
-  --style "正式、技术导向、少空话" \
-  --source ./data/forestry_notes.md \
-  --output-format markdown \
-  --thread-id forestry-plan-demo \
-  --rag \
+writing-agent index `
+  --source ./data/forestry_notes.md `
+  --collection forestry_demo `
+  --reset
+```
+
+Retrieve chunks:
+
+```bash
+writing-agent retrieve `
+  --query "林业知识问答系统如何构建知识库" `
+  --collection forestry_demo `
   --top-k 5
 ```
 
-If `--thread-id` is omitted, the CLI generates a readable id like
-`writing-20260608-153000`. Checkpoints and metadata are bound to this id.
+RAG modes:
 
-Supported source file types:
+- `keyword`: term-overlap retrieval over loaded local chunks.
+- `vector`: Chroma vector retrieval.
+- `hybrid`: weighted fusion, vector score 0.7 and keyword score 0.3.
 
-- `.md`
-- `.txt`
-- `.docx`
-- `.pdf`
+`outputs/chroma/` is ignored by Git.
 
-Generated markdown is written to `OUTPUT_DIR`, defaulting to `./outputs`.
-
-## Human Review And Resume
-
-Pause after outline:
+## Generate A Report
 
 ```bash
-writing-agent run \
-  --topic "智慧林务系统建设计划书" \
-  --thread-id forestry-plan-demo \
-  --pause-after-outline
+writing-agent run `
+  --topic "智慧林务系统建设计划书" `
+  --type proposal `
+  --audience "项目负责人和技术评审" `
+  --length "5000字" `
+  --style "正式、技术导向、少空话" `
+  --source ./data/forestry_notes.md `
+  --collection forestry_demo `
+  --rag `
+  --rag-mode hybrid `
+  --top-k 5 `
+  --output-format both `
+  --thread-id forestry-plan-demo
 ```
 
-Pause before final export:
+`--output-format` supports `markdown`, `docx`, and `both`. The docx export
+includes a title page, generation notes, heading mapping, paragraphs, ordered and
+unordered lists, simple markdown tables, header, and footer.
+
+## Human Review Resume
+
+Pause after outline or before export:
 
 ```bash
-writing-agent run \
-  --topic "智慧林务系统建设计划书" \
-  --thread-id forestry-plan-demo \
-  --pause-before-export
+writing-agent run --topic "智慧林务系统建设计划书" --thread-id forestry-plan-demo --pause-after-outline
+writing-agent run --topic "智慧林务系统建设计划书" --thread-id forestry-plan-demo --pause-before-export
 ```
 
-When the graph pauses, the CLI prints the `thread_id`, interrupt payload, and a
-resume command. Create a review file:
+Create a review file:
 
 ```bash
 echo "提纲整体可用，但请增加系统评估、部署风险、数据安全章节。" > review.md
 ```
 
-Resume:
+Resume from the LangGraph checkpoint:
 
 ```bash
-writing-agent resume \
-  --thread-id forestry-plan-demo \
+writing-agent resume `
+  --thread-id forestry-plan-demo `
   --review-file review.md
 ```
 
-Review files can be markdown text or JSON. Resume uses LangGraph
-`Command(resume=...)` and continues from the checkpoint to export.
-
-## Thread Metadata
-
-List known threads:
+List and inspect checkpoint metadata:
 
 ```bash
 writing-agent threads
-```
-
-Inspect one thread:
-
-```bash
 writing-agent inspect --thread-id forestry-plan-demo
 ```
 
-Thread metadata is stored in `outputs/thread_metadata.json`. It summarizes
-`thread_id`, update time, current step, interruption status, request topic,
-section count, review finding count, final-document presence, and output path.
+## Evaluation
 
-## Local RAG
-
-The first RAG implementation is intentionally small and replaceable:
-
-- `simple_chunk_text()` splits local source text by paragraph with overlap.
-- `build_local_index()` builds an in-memory `list[DocumentChunk]`.
-- `retrieve()` uses simple term-overlap scoring.
-
-Before each section is written, the workflow retrieves top-k source chunks using
-the section goal and key points. Only those chunks are injected into the writer
-prompt. If no chunks match, the draft marks `本节资料依据不足`.
-
-Disable local RAG:
-
-```bash
-writing-agent run --topic "..." --no-rag
-```
-
-## Evaluate Output
-
-Evaluate generated markdown:
+Rule-based evaluation:
 
 ```bash
 writing-agent evaluate --file outputs/<generated_file>.md
-```
-
-JSON output:
-
-```bash
 writing-agent evaluate --file outputs/<generated_file>.md --json
 ```
 
-Rule metrics include character count, word count, heading counts, section count,
-abstract/conclusion/reference detection, repeated paragraph ratio,
-`依据不足` count, and generic phrase risk terms such as `赋能`, `高质量发展`,
-`形成闭环`, `显著提升`, `多措并举`, `夯实基础`, and `智能化水平`.
+Optional LLM Judge:
 
-## Roadmap
+```bash
+writing-agent evaluate --file outputs/<generated_file>.md --llm-judge
+```
 
-- Replace minimal RAG with embeddings and a persistent vector index.
-- Web search tool integration for fresh external context.
-- Interactive human editing and richer resume controls.
-- Styled docx export with tables, references, and templates.
-- Multi-agent collaboration for planner, writer, reviewer, and editor roles.
-- LangSmith tracing for long workflow debugging.
-- Evaluation datasets and optional LLM-as-judge scoring.
+Rule metrics are stable deterministic indicators: word/character count, heading
+counts, section count, abstract/conclusion/reference detection, repeated
+paragraph ratio, `依据不足` count, and generic phrase risk terms such as `赋能`,
+`高质量发展`, `形成闭环`, `显著提升`, `多措并举`, `夯实基础`, and `智能化水平`.
+
+LLM Judge is subjective and may vary by model. It scores structure, logic,
+evidence, specificity, audience fit, actionability, risk awareness, and overall
+quality. Important deliverables still need human review.
+
+## Batch Runs
+
+Example task file: `examples/eval_tasks.jsonl`.
+
+```bash
+writing-agent batch-run `
+  --tasks examples/eval_tasks.jsonl `
+  --output-dir outputs/batch `
+  --rag-mode hybrid `
+  --collection forestry_demo `
+  --output-format markdown
+```
+
+Batch evaluation:
+
+```bash
+writing-agent batch-evaluate `
+  --input-dir outputs/batch `
+  --json-output outputs/batch_eval.json
+```
+
+`batch-run` uses one `thread_id` per task and keeps going if a task fails.
+`batch-evaluate` summarizes average words, sections, repeated paragraph ratio,
+insufficient-evidence count, and total risk-term hits.
+
+## Known Limits
+
+- Chroma vector quality depends on the configured embedding model.
+- The current hybrid fusion strategy is intentionally simple.
+- LLM Judge is optional and should not replace human review.
+- docx export supports common markdown structures, not full markdown syntax.
+- Web search, advanced citation verification, and styled docx templates remain future work.
 

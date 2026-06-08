@@ -14,6 +14,7 @@ from rich.table import Table
 
 from writing_agent.checkpoints import inspect_thread, list_threads
 from writing_agent.config import get_settings
+from writing_agent.evaluation.batch import evaluate_batch_directory, run_batch_tasks
 from writing_agent.evaluation.evaluator import evaluate_markdown
 from writing_agent.evaluation.llm_judge import judge_document_with_llm
 from writing_agent.graph.workflow import (
@@ -366,6 +367,71 @@ def evaluate(
     if llm_judge:
         console.print("[bold]LLM Judge[/bold]")
         console.print(result["llm_judge"])
+
+
+@app.command("batch-run")
+def batch_run(
+    tasks: Annotated[
+        Path,
+        typer.Option("--tasks", exists=True, file_okay=True, dir_okay=False),
+    ],
+    output_dir: Annotated[Path, typer.Option("--output-dir", help="Batch output directory.")],
+    rag_mode: Annotated[str, typer.Option("--rag-mode", help="keyword, vector, or hybrid.")] = (
+        "hybrid"
+    ),
+    collection: Annotated[
+        str,
+        typer.Option("--collection", help="Chroma collection name."),
+    ] = "",
+    output_format: Annotated[
+        str,
+        typer.Option("--output-format", help="markdown, docx, or both."),
+    ] = "markdown",
+) -> None:
+    """Run a JSONL batch of writing tasks."""
+
+    result = run_batch_tasks(
+        tasks,
+        output_dir=output_dir,
+        rag_mode=rag_mode,
+        collection=collection,
+        output_format=output_format,
+        settings=get_settings(),
+    )
+    table = Table(title="Batch Run")
+    table.add_column("status")
+    table.add_column("count")
+    table.add_row("success", str(result["success"]))
+    table.add_row("failure", str(result["failure"]))
+    console.print(table)
+    for item in result["results"]:
+        if item["status"] == "failed":
+            console.print(f"[red]{item['id']} failed:[/red] {item['error']}")
+
+
+@app.command("batch-evaluate")
+def batch_evaluate(
+    input_dir: Annotated[Path, typer.Option("--input-dir", exists=True, file_okay=False)],
+    json_output: Annotated[
+        Path | None,
+        typer.Option("--json-output", help="Optional JSON output path."),
+    ] = None,
+) -> None:
+    """Evaluate every markdown file in a directory and summarize metrics."""
+
+    result = evaluate_batch_directory(input_dir)
+    if json_output is not None:
+        json_output.parent.mkdir(parents=True, exist_ok=True)
+        json_output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        console.print(f"[green]Wrote JSON:[/green] {json_output}")
+
+    table = Table(title=f"Batch Evaluation: {input_dir}")
+    table.add_column("metric")
+    table.add_column("value")
+    table.add_row("file_count", str(result["file_count"]))
+    for key, value in result["summary"].items():
+        table.add_row(key, f"{value:.3f}" if isinstance(value, float) else str(value))
+    console.print(table)
 
 
 @app.command("init-example")

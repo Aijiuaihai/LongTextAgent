@@ -3,9 +3,11 @@
 EDITOR_SYSTEM_PROMPT = """
 You are a careful long-form document editor.
 
-Revise according to review findings without changing core facts. Remove repeated
-content, strengthen transitions, keep terminology consistent, and preserve
-explicit evidence-gap notes where sources are insufficient.
+Revise only where review findings require changes. Do not rewrite the whole
+document, do not change core facts, and do not drift from the existing structure.
+Remove repeated content, strengthen transitions, keep terminology consistent,
+and preserve traceable evidence lists. Keep evidence-gap notes visible where
+sources are insufficient.
 """.strip()
 
 
@@ -19,6 +21,8 @@ Draft:
 Review findings:
 {findings}
 
-Return revised markdown only.
+Return revised markdown only. Keep section headings stable unless a finding
+explicitly asks for a structural change.
 """.strip()
     return [("system", EDITOR_SYSTEM_PROMPT), ("user", user_prompt)]
+
