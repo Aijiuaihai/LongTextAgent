@@ -189,6 +189,90 @@ LLM Judge is subjective and may vary by model. It scores structure, logic,
 evidence, specificity, audience fit, actionability, risk awareness, and overall
 quality. Important deliverables still need human review.
 
+## Citation Verification
+
+Verify generated citations against the local index manifest:
+
+```bash
+writing-agent verify-citations `
+  --file outputs/xxx.md `
+  --collection forestry_demo
+```
+
+JSON output:
+
+```bash
+writing-agent verify-citations `
+  --file outputs/xxx.md `
+  --collection forestry_demo `
+  --json
+```
+
+`evaluate` can include citation verification:
+
+```bash
+writing-agent evaluate `
+  --file outputs/xxx.md `
+  --verify-citations `
+  --collection forestry_demo
+```
+
+Supported citation formats include:
+
+- `[source: path#chunk_id]`
+- `[source_path: xxx, chunk_id: yyy]`
+- `source_path=xxx; chunk_id=chunk_001`
+- items in a `参考依据` list
+
+## Collection Management
+
+```bash
+writing-agent collections list
+writing-agent collections stats --collection forestry_demo
+writing-agent collections export-manifest --collection forestry_demo --output manifest.json
+writing-agent collections rebuild --collection forestry_demo --source ./data/forestry_notes.md
+writing-agent collections delete --collection forestry_demo --yes
+```
+
+Index manifests are written to `outputs/index_manifests/` and are ignored by
+Git because they may contain local paths and document metadata.
+
+## DOCX Templates
+
+Run with a user template:
+
+```bash
+writing-agent run `
+  --topic "智慧林务系统建设计划书" `
+  --type proposal `
+  --audience "项目负责人和技术评审" `
+  --length "5000字" `
+  --style "正式、技术导向、少空话" `
+  --collection forestry_demo `
+  --rag `
+  --rag-mode hybrid `
+  --output-format docx `
+  --docx-template ./templates/proposal_template.docx `
+  --thread-id forestry-template-demo
+```
+
+Supported placeholders:
+
+- `{{title}}`
+- `{{topic}}`
+- `{{document_type}}`
+- `{{audience}}`
+- `{{generated_at}}`
+- `{{model_name}}`
+- `{{rag_mode}}`
+- `{{collection}}`
+- `{{thread_id}}`
+- `{{body}}`
+
+If `{{body}}` is missing, the generated body is appended to the end and a warning
+is recorded. Word table-of-contents fields must be refreshed in Microsoft Word
+by right-clicking and updating the field.
+
 ## Batch Runs
 
 Example task file: `examples/eval_tasks.jsonl`.
@@ -214,6 +298,72 @@ writing-agent batch-evaluate `
 `batch-evaluate` summarizes average words, sections, repeated paragraph ratio,
 insufficient-evidence count, and total risk-term hits.
 
+Rerun failed tasks:
+
+```bash
+writing-agent batch-rerun-failed `
+  --failed-tasks outputs/batch/<run_id>/failed_tasks.jsonl `
+  --output-dir outputs/batch/<new_run_id> `
+  --collection forestry_demo
+```
+
+Each batch run writes:
+
+- `task_outputs/`
+- `batch_report.json`
+- `failed_tasks.jsonl`
+- `run_config.json`
+
+## LangSmith Tracing
+
+Optional `.env` values:
+
+```env
+LANGSMITH_TRACING=false
+LANGSMITH_API_KEY=
+LANGSMITH_PROJECT=writing-agent-local
+LANGSMITH_ENDPOINT=
+```
+
+Check tracing configuration without exposing the API key:
+
+```bash
+writing-agent trace-check
+```
+
+`batch-run` supports `--trace/--no-trace`; tracing is off by default.
+
+## Baseline Evaluation
+
+Run a fixed baseline:
+
+```bash
+writing-agent baseline-run `
+  --tasks examples/baseline_tasks.jsonl `
+  --collection forestry_demo `
+  --rag-mode hybrid `
+  --output-dir outputs/baseline
+```
+
+The run writes `baseline_summary.json` with commit hash, model name, embedding
+model, RAG mode, collection, success/failure counts, average rule score,
+average citation valid rate, and average insufficient-evidence count.
+
+Use baseline summaries to compare different commits, models, embedding models,
+and RAG modes.
+
+## Recommended Engineering Flow
+
+1. Index the collection.
+2. Retrieve a few sanity-check chunks.
+3. Run one document.
+4. Verify citations.
+5. Evaluate the document.
+6. Run a batch.
+7. Batch-evaluate outputs.
+8. Run baseline.
+9. Compare baseline summaries across commits, models, and RAG modes.
+
 ## Known Limits
 
 - Chroma vector quality depends on the configured embedding model.
@@ -221,4 +371,3 @@ insufficient-evidence count, and total risk-term hits.
 - LLM Judge is optional and should not replace human review.
 - docx export supports common markdown structures, not full markdown syntax.
 - Web search, advanced citation verification, and styled docx templates remain future work.
-
