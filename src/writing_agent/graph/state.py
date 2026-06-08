@@ -29,8 +29,10 @@ class WritingState(TypedDict, total=False):
     rag_collection: str
     rag_rebuild_index: bool
     output_path: str
+    output_paths: dict[str, str]
     output_format: str
     output_dir: str
+    thread_id: str
     use_llm: bool
     pause_after_outline: bool
     pause_before_export: bool

@@ -5,6 +5,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from writing_agent.config import get_settings
 from writing_agent.graph.state import WritingState
 from writing_agent.llm import format_connection_help, get_chat_model
 from writing_agent.models import (
@@ -566,6 +567,8 @@ def assemble_document_node(state: WritingState) -> WritingState:
             "review_findings": [finding.model_dump(mode="json") for finding in findings],
             "rag_mode": state.get("rag_mode", "hybrid"),
             "collection": state.get("rag_collection", ""),
+            "thread_id": state.get("thread_id", ""),
+            "topic": request.topic,
         },
     )
     return {
@@ -599,15 +602,44 @@ def export_document_node(state: WritingState) -> WritingState:
     final = value if isinstance(value, FinalDocument) else FinalDocument.model_validate(value)
     output_dir = state.get("output_dir", "./outputs")
     output_format = state.get("output_format", "markdown")
+    settings = get_settings()
+    metadata = {
+        **final.metadata,
+        "model_name": settings.ollama_model
+        if settings.llm_provider == "ollama"
+        else settings.openai_model,
+    }
     try:
         if output_format == "markdown":
             path = export_markdown(final.markdown, output_dir=output_dir, title=final.title)
+            output_paths = {"markdown": str(path)}
         elif output_format == "docx":
-            path = export_docx(final.markdown, output_dir=output_dir, title=final.title)
+            path = export_docx(
+                final.markdown,
+                output_dir=output_dir,
+                title=final.title,
+                metadata=metadata,
+            )
+            output_paths = {"docx": str(path)}
+        elif output_format == "both":
+            markdown_path = export_markdown(
+                final.markdown,
+                output_dir=output_dir,
+                title=final.title,
+            )
+            docx_path = export_docx(
+                final.markdown,
+                output_dir=output_dir,
+                title=final.title,
+                metadata=metadata,
+            )
+            path = markdown_path
+            output_paths = {"markdown": str(markdown_path), "docx": str(docx_path)}
         else:
             raise ValueError(f"Unsupported output format: {output_format}")
         return {
             "output_path": str(path),
+            "output_paths": output_paths,
             "current_step": "export_document",
             "errors": _errors(state),
         }

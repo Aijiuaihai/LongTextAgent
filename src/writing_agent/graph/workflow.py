@@ -132,6 +132,7 @@ def run_writing_workflow(
     state.setdefault("rag_mode", "hybrid")
     state.setdefault("rag_top_k", 5)
     resolved_thread_id = thread_id or generate_thread_id()
+    state["thread_id"] = resolved_thread_id
     app = build_workflow(settings=resolved_settings, checkpointer=checkpointer)
     config = {"configurable": {"thread_id": resolved_thread_id}}
     result = app.invoke(state, config=config)

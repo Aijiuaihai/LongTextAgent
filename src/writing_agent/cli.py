@@ -122,7 +122,7 @@ def run(
     ] = None,
     output_format: Annotated[
         str,
-        typer.Option("--output-format", help="markdown or docx."),
+        typer.Option("--output-format", help="markdown, docx, or both."),
     ] = "markdown",
     pause_after_outline: Annotated[
         bool,
@@ -196,7 +196,8 @@ def run(
             console.print("[bold]Interrupt payload:[/bold]")
             console.print(result["__interrupt__"])
     else:
-        console.print(f"[green]Exported:[/green] {result.get('output_path')}")
+        output_paths = result.get("output_paths")
+        console.print(f"[green]Exported:[/green] {output_paths or result.get('output_path')}")
 
 
 @app.command("index")
