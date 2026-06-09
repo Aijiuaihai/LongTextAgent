@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Documents</title><link rel="stylesheet" href="/static/app.css" /></head>
+  <body data-page="documents">
+    <main class="shell">
+      <header class="topbar"><div class="brand"><h1>Documents</h1><p>生成结果、预览、下载与评估</p></div><nav class="nav"><a href="/">写作任务</a><a href="/collections">Collections</a><a href="/documents">Documents</a><a href="/settings">Settings</a></nav></header>
+      <section class="grid">
+        <div class="panel"><h2>文档列表</h2><div class="card-list" id="documentList"></div></div>
+        <aside class="panel"><h2>预览 / 操作</h2><div class="toolbar"><input id="docCollection" placeholder="collection for citation checks" /></div><div class="toolbar"><button id="verifyDoc" class="secondary">Verify</button><button id="repairDoc" class="secondary">Repair</button><button id="evaluateDoc" class="secondary">Evaluate</button></div><pre id="documentPreview"></pre></aside>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

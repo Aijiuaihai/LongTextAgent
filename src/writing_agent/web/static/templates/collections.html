@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Collections</title><link rel="stylesheet" href="/static/app.css" /></head>
+  <body data-page="collections">
+    <main class="shell">
+      <header class="topbar"><div class="brand"><h1>Collections</h1><p>本地 Chroma 知识库管理</p></div><nav class="nav"><a href="/">写作任务</a><a href="/collections">Collections</a><a href="/documents">Documents</a><a href="/settings">Settings</a></nav></header>
+      <section class="grid">
+        <form class="panel" id="collectionForm">
+          <h2>Rebuild Collection</h2>
+          <label>Collection <input name="collection" required /></label>
+          <label>Source paths <textarea name="source_paths" placeholder="每行一个 data/ 下资料路径"></textarea></label>
+          <button type="submit">Rebuild</button>
+          <h3>Retrieve Test</h3>
+          <label>Query <input id="retrieveQuery" /></label>
+          <button type="button" class="secondary" id="retrieveButton">Retrieve</button>
+          <pre id="retrieveResult"></pre>
+        </form>
+        <aside class="panel"><h2>Collection 列表</h2><div class="card-list" id="collectionList"></div></aside>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

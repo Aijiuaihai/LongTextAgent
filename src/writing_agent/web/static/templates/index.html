@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LongTextAgent Web Console</title>
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body data-page="index">
+    <main class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <h1>LongTextAgent Web Console</h1>
+          <p>本地长文本写作 Agent 控制台</p>
+        </div>
+        <nav class="nav">
+          <a href="/">写作任务</a>
+          <a href="/collections">Collections</a>
+          <a href="/documents">Documents</a>
+          <a href="/settings">Settings</a>
+        </nav>
+      </header>
+
+      <section class="grid">
+        <form class="panel" id="jobForm">
+          <h2>创建写作任务</h2>
+          <div class="row">
+            <label>写作主题 <input name="topic" required placeholder="智慧林务系统建设计划书" /></label>
+            <label>
+              文档类型
+              <select name="document_type">
+                <option value="proposal">计划书 / 立项书</option>
+                <option value="report">报告</option>
+                <option value="plan">项目计划</option>
+                <option value="weekly_report">周报</option>
+                <option value="research_summary">研究方案</option>
+                <option value="custom">自定义</option>
+              </select>
+            </label>
+          </div>
+          <div class="row">
+            <label>目标受众 <input name="audience" value="项目负责人和技术评审" /></label>
+            <label>目标篇幅 <input name="target_length" value="5000字" /></label>
+          </div>
+          <label>写作风格 <input name="style" value="正式、技术导向、少空话" /></label>
+          <label>需求说明 <textarea name="constraints" placeholder="输入章节要求、限制条件、必须使用的资料等"></textarea></label>
+          <div class="row">
+            <label>上传需求/资料文件 <input id="sourceUpload" type="file" multiple accept=".md,.txt,.docx,.pdf" /></label>
+            <label>已上传路径 <textarea name="source_paths" id="sourcePaths" placeholder="每行一个文件路径，也可手动填 ./data/..."></textarea></label>
+          </div>
+          <div class="row">
+            <label>Collection <input name="collection" placeholder="forestry_demo" /></label>
+            <label>RAG 模式 <select name="rag_mode"><option value="hybrid">hybrid</option><option value="vector">vector</option><option value="keyword">keyword</option></select></label>
+          </div>
+          <div class="row">
+            <label>Top K <input name="top_k" type="number" value="5" min="1" max="12" /></label>
+            <label>输出格式 <select name="output_format"><option value="markdown">markdown</option><option value="docx">docx</option><option value="both">both</option></select></label>
+          </div>
+          <div class="row">
+            <label>docx 模板 <input name="docx_template" placeholder="./templates/proposal_template.docx" /></label>
+            <label>Thread ID <input name="thread_id" placeholder="可选，留空自动生成" /></label>
+          </div>
+          <div class="toolbar">
+            <label><input name="rag" type="checkbox" checked /> 启用 RAG</label>
+            <label><input name="use_llm" type="checkbox" checked /> 调用真实 LLM</label>
+          </div>
+          <button type="submit">创建并运行任务</button>
+        </form>
+
+        <aside class="panel">
+          <h2>最近任务</h2>
+          <div class="card-list" id="recentJobs"></div>
+        </aside>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

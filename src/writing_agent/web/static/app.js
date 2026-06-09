@@ -1,81 +1,203 @@
-const form = document.querySelector("#generateForm");
-const resultBox = document.querySelector("#resultBox");
-const runState = document.querySelector("#runState");
-const submitButton = document.querySelector("#submitButton");
-const configLine = document.querySelector("#configLine");
-
-function setState(text, className = "") {
-  runState.textContent = text;
-  runState.className = `status-pill ${className}`.trim();
-}
-
-function renderResult(data) {
-  if (data.error) {
-    resultBox.innerHTML = `<p class="error-text">${data.error}</p>`;
-    return;
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    headers: options.body instanceof FormData ? {} : { "Content-Type": "application/json" },
+    ...options,
+  });
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : {};
+  if (!response.ok) {
+    throw new Error(data.error || response.statusText);
   }
-  const outputPaths = Object.entries(data.output_paths || {})
-    .map(([key, value]) => `<dt>${key}</dt><dd>${value}</dd>`)
-    .join("");
-  const errors = (data.errors || [])
-    .map((item) => `<li>${item}</li>`)
-    .join("");
-  resultBox.innerHTML = `
-    <dl>
-      <dt>thread_id</dt>
-      <dd>${data.thread_id}</dd>
-      <dt>topic</dt>
-      <dd>${data.topic}</dd>
-      <dt>output_path</dt>
-      <dd>${data.output_path || ""}</dd>
-      ${outputPaths}
-    </dl>
-    ${errors ? `<h3>Warnings</h3><ul>${errors}</ul>` : ""}
-  `;
+  return data;
 }
 
-async function loadConfig() {
-  try {
-    const response = await fetch("/api/config");
-    const data = await response.json();
-    configLine.textContent = `${data.llm_provider} · ${data.ollama_model || data.openai_model || ""}`;
-  } catch (_error) {
-    configLine.textContent = "模型配置读取失败";
+function lines(value) {
+  return String(value || "")
+    .split("\n")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function card(html) {
+  const div = document.createElement("div");
+  div.className = "item";
+  div.innerHTML = html;
+  return div;
+}
+
+async function uploadSelectedFiles(input, targetTextarea) {
+  const paths = [];
+  for (const file of input.files || []) {
+    const data = new FormData();
+    data.append("file", file);
+    const uploaded = await api("/api/files/upload", { method: "POST", body: data });
+    paths.push(uploaded.path);
+  }
+  if (paths.length) {
+    targetTextarea.value = [...lines(targetTextarea.value), ...paths].join("\n");
   }
 }
 
-form.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const data = new FormData(form);
-  if (!form.rag.checked) {
-    data.set("rag", "false");
+async function loadRecentJobs() {
+  const target = document.querySelector("#recentJobs");
+  if (!target) return;
+  const jobs = await api("/api/jobs");
+  target.innerHTML = "";
+  for (const job of jobs.slice(-8).reverse()) {
+    target.appendChild(
+      card(`<strong>${job.topic}</strong><span class="status ${job.status}">${job.status}</span><p class="muted">${job.thread_id}<br>${job.current_step || ""}</p><a href="/jobs/${job.job_id}">打开任务</a>`),
+    );
   }
-  if (!form.use_llm.checked) {
-    data.set("use_llm", "false");
-  }
-  setState("生成中", "running");
-  submitButton.disabled = true;
-  resultBox.innerHTML = "<p>Agent workflow 正在执行，长文本生成可能需要数分钟。</p>";
+}
 
-  try {
-    const response = await fetch("/api/generate", {
-      method: "POST",
-      body: data,
+async function initIndex() {
+  await loadRecentJobs();
+  const upload = document.querySelector("#sourceUpload");
+  const sourcePaths = document.querySelector("#sourcePaths");
+  upload?.addEventListener("change", () => uploadSelectedFiles(upload, sourcePaths));
+  document.querySelector("#jobForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.target);
+    const constraints = lines(form.get("constraints"));
+    const payload = {
+      topic: form.get("topic"),
+      document_type: form.get("document_type"),
+      audience: form.get("audience"),
+      target_length: form.get("target_length"),
+      style: form.get("style"),
+      constraints,
+      source_paths: lines(form.get("source_paths")),
+      collection: form.get("collection") || "",
+      rag: form.get("rag") === "on",
+      rag_mode: form.get("rag_mode"),
+      top_k: Number(form.get("top_k") || 5),
+      output_format: form.get("output_format"),
+      docx_template: form.get("docx_template") || "",
+      thread_id: form.get("thread_id") || null,
+      use_llm: form.get("use_llm") === "on",
+    };
+    const result = await api("/api/jobs", { method: "POST", body: JSON.stringify(payload) });
+    location.href = `/jobs/${result.job_id}`;
+  });
+}
+
+async function renderJob(jobId) {
+  const job = await api(`/api/jobs/${jobId}`);
+  document.querySelector("#jobTitle").textContent = `${job.topic} · ${job.thread_id}`;
+  document.querySelector("#jobSummary").innerHTML = `<p><span class="status ${job.status}">${job.status}</span></p><p class="muted">current_step: ${job.current_step || ""}</p>`;
+  const outputs = document.querySelector("#jobOutputs");
+  outputs.innerHTML = "";
+  for (const [kind, path] of Object.entries(job.output_files || {})) {
+    outputs.appendChild(card(`<strong>${kind}</strong><p class="muted">${path}</p>`));
+  }
+  if (job.status === "interrupted") {
+    document.querySelector("#reviewBox").classList.remove("hidden");
+    document.querySelector("#interruptPayload").textContent = JSON.stringify(job.interrupt_payload, null, 2);
+  }
+}
+
+function startJobEvents(jobId) {
+  const log = document.querySelector("#jobLog");
+  const source = new EventSource(`/api/jobs/${jobId}/events`);
+  for (const name of ["started", "step_started", "step_finished", "interrupted", "resumed", "exported", "failed", "completed", "cancel_requested"]) {
+    source.addEventListener(name, (event) => {
+      const item = JSON.parse(event.data);
+      log.textContent += `[${item.created_at}] ${item.event} ${item.step || ""} ${item.message || ""}\n`;
+      if (["completed", "failed", "interrupted"].includes(item.event)) {
+        renderJob(jobId);
+      }
     });
-    const payload = await response.json();
-    if (!response.ok) {
-      setState("失败", "error");
-      renderResult(payload);
-      return;
-    }
-    setState("完成", "done");
-    renderResult(payload);
-  } catch (error) {
-    setState("失败", "error");
-    renderResult({ error: String(error) });
-  } finally {
-    submitButton.disabled = false;
   }
-});
+}
 
-loadConfig();
+async function initJob() {
+  const jobId = document.body.dataset.jobId;
+  await renderJob(jobId);
+  startJobEvents(jobId);
+  document.querySelector("#refreshJob")?.addEventListener("click", () => renderJob(jobId));
+  document.querySelector("#resumeButton")?.addEventListener("click", async () => {
+    const review = document.querySelector("#reviewText").value;
+    await api(`/api/jobs/${jobId}/resume`, {
+      method: "POST",
+      body: JSON.stringify({ review }),
+    });
+    location.reload();
+  });
+}
+
+async function initCollections() {
+  const list = document.querySelector("#collectionList");
+  async function refresh() {
+    const rows = await api("/api/collections");
+    list.innerHTML = "";
+    for (const row of rows) {
+      list.appendChild(card(`<strong>${row.collection_name}</strong><p class="muted">sources=${row.source_count}, chunks=${row.chunk_count}<br>${row.updated_at || ""}</p>`));
+    }
+  }
+  await refresh();
+  document.querySelector("#collectionForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.target);
+    await api("/api/collections", {
+      method: "POST",
+      body: JSON.stringify({ collection: form.get("collection"), source_paths: lines(form.get("source_paths")), reset: true }),
+    });
+    await refresh();
+  });
+  document.querySelector("#retrieveButton")?.addEventListener("click", async () => {
+    const collection = new FormData(document.querySelector("#collectionForm")).get("collection");
+    const query = document.querySelector("#retrieveQuery").value;
+    const result = await api(`/api/collections/${collection}/retrieve`, {
+      method: "POST",
+      body: JSON.stringify({ query, top_k: 5 }),
+    });
+    document.querySelector("#retrieveResult").textContent = JSON.stringify(result, null, 2);
+  });
+}
+
+let selectedDocumentId = null;
+
+async function initDocuments() {
+  const list = document.querySelector("#documentList");
+  const docs = await api("/api/documents");
+  for (const doc of docs) {
+    const item = card(`<strong>${doc.name}</strong><p class="muted">${doc.path}</p><a href="/api/documents/${doc.document_id}/download">下载</a>`);
+    item.addEventListener("click", async () => {
+      selectedDocumentId = doc.document_id;
+      const preview = await api(`/api/documents/${doc.document_id}/preview`);
+      document.querySelector("#documentPreview").textContent = preview.content || JSON.stringify(preview, null, 2);
+    });
+    list.appendChild(item);
+  }
+  async function docAction(action) {
+    if (!selectedDocumentId) return;
+    const collection = document.querySelector("#docCollection").value || null;
+    const result = await api(`/api/documents/${selectedDocumentId}/${action}`, {
+      method: "POST",
+      body: JSON.stringify({ collection }),
+    });
+    document.querySelector("#documentPreview").textContent = JSON.stringify(result, null, 2);
+  }
+  document.querySelector("#verifyDoc")?.addEventListener("click", () => docAction("verify-citations"));
+  document.querySelector("#repairDoc")?.addEventListener("click", () => docAction("repair-citations"));
+  document.querySelector("#evaluateDoc")?.addEventListener("click", () => docAction("evaluate"));
+}
+
+async function initSettings() {
+  document.querySelector("#healthBox").textContent = JSON.stringify(await api("/api/health"), null, 2);
+  document.querySelector("#settingsBox").textContent = JSON.stringify(await api("/api/settings"), null, 2);
+  document.querySelector("#traceCheck")?.addEventListener("click", async () => {
+    document.querySelector("#settingsActionBox").textContent = JSON.stringify(await api("/api/settings/trace-check"), null, 2);
+  });
+  document.querySelector("#checkModel")?.addEventListener("click", async () => {
+    document.querySelector("#settingsActionBox").textContent = "checking model...";
+    document.querySelector("#settingsActionBox").textContent = JSON.stringify(await api("/api/settings/check-model", { method: "POST", body: "{}" }), null, 2);
+  });
+}
+
+const page = document.body.dataset.page;
+if (page === "index") initIndex();
+if (page === "job") initJob();
+if (page === "collections") initCollections();
+if (page === "documents") initDocuments();
+if (page === "settings") initSettings();

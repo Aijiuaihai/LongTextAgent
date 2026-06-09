@@ -2,30 +2,25 @@ from fastapi.testclient import TestClient
 
 from writing_agent.config import Settings
 from writing_agent.web import app as web_app
-from writing_agent.web.app import WebGenerationResult, create_app
+from writing_agent.web.app import create_app
 
 
 def test_web_index_serves_frontend(tmp_path) -> None:
-    client = TestClient(create_app(Settings(output_dir=tmp_path / "outputs")))
+    client = TestClient(
+        create_app(Settings(output_dir=tmp_path / "outputs", data_dir=tmp_path / "data"))
+    )
 
     response = client.get("/")
 
     assert response.status_code == 200
-    assert "LongTextAgent" in response.text
+    assert "LongTextAgent Web Console" in response.text
 
 
-def test_web_generate_uses_workflow_bridge(tmp_path, monkeypatch) -> None:
-    def fake_generate_document(**kwargs):
-        return WebGenerationResult(
-            thread_id="web-writing-test",
-            topic=kwargs["topic"],
-            output_path=str(tmp_path / "outputs" / "demo.md"),
-            output_paths={"markdown": str(tmp_path / "outputs" / "demo.md")},
-            errors=[],
-        )
-
-    monkeypatch.setattr(web_app, "_generate_document", fake_generate_document)
-    client = TestClient(create_app(Settings(output_dir=tmp_path / "outputs")))
+def test_web_generate_compat_creates_job(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(web_app.jobs, "run_job", lambda *args, **kwargs: None)
+    client = TestClient(
+        create_app(Settings(output_dir=tmp_path / "outputs", data_dir=tmp_path / "data"))
+    )
 
     response = client.post(
         "/api/generate",
@@ -46,4 +41,5 @@ def test_web_generate_uses_workflow_bridge(tmp_path, monkeypatch) -> None:
     )
 
     assert response.status_code == 200
-    assert response.json()["thread_id"] == "web-writing-test"
+    assert response.json()["thread_id"].startswith("web-writing-")
+

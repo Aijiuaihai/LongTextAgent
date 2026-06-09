@@ -3,6 +3,7 @@
 import json
 import sys
 import time
+import webbrowser
 from pathlib import Path
 from typing import Annotated
 from urllib.error import URLError
@@ -156,7 +157,11 @@ def serve(
     port: Annotated[int, typer.Option("--port", help="Bind port.")] = 8000,
     reload: Annotated[
         bool,
-        typer.Option("--reload", help="Enable uvicorn reload for local development."),
+        typer.Option("--reload/--no-reload", help="Enable uvicorn reload for local development."),
+    ] = False,
+    open_browser: Annotated[
+        bool,
+        typer.Option("--open-browser/--no-open-browser", help="Open the web console in a browser."),
     ] = False,
 ) -> None:
     """Start the simple web frontend."""
@@ -166,7 +171,15 @@ def serve(
     except ImportError as exc:  # pragma: no cover - dependency guard
         console.print("[red]Install the web dependencies with `python -m pip install -e .`.[/red]")
         raise typer.Exit(code=1) from exc
-    console.print(f"[green]Serving LongTextAgent:[/green] http://{host}:{port}")
+    url = f"http://{host}:{port}"
+    console.print(f"[green]Serving LongTextAgent:[/green] {url}")
+    if host == "0.0.0.0":
+        console.print(
+            "[yellow]Warning:[/yellow] binding 0.0.0.0 may expose the local console. "
+            "You are responsible for network security."
+        )
+    if open_browser:
+        webbrowser.open(url)
     uvicorn.run("writing_agent.web.app:app", host=host, port=port, reload=reload)
 
 
