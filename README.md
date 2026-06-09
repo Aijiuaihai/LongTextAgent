@@ -85,9 +85,9 @@ For Ollama on Windows, `OLLAMA_BASE_URL` is normally
 `host.docker.internal` may be needed. If model checks fail, run `ollama serve`
 and `ollama list`.
 
-## Simple Web Frontend
+## Web Console
 
-Start the local web UI:
+Start the local Web Console:
 
 ```bash
 writing-agent serve --host 127.0.0.1 --port 8000
@@ -101,19 +101,88 @@ $env:PYTHONPATH="src"
 python -m writing_agent.cli serve --host 127.0.0.1 --port 8000
 ```
 
-Open `http://127.0.0.1:8000`. The page supports:
+Development reload:
 
-- typing a writing requirement directly;
-- uploading one requirement document (`.md`, `.txt`, `.docx`, `.pdf`);
-- uploading multiple local source documents for RAG;
-- choosing document type, audience, length, style, output format, RAG mode, and
-  collection;
-- running the existing LangGraph writing workflow and showing `thread_id` plus
-  exported file paths.
+```bash
+writing-agent serve --host 127.0.0.1 --port 8000 --reload
+```
+
+Open `http://127.0.0.1:8000`.
+
+The Web Console is a local browser control plane over the same CLI and
+LangGraph workflow capabilities. It shares `outputs/`, Chroma collections,
+checkpoints, thread metadata, templates, and generated documents with the CLI.
+
+Web Console pages:
+
+- `/`: create writing jobs.
+- `/jobs/<job_id>`: view job status, live SSE events, interrupt payloads, human
+  review textarea, resume, and output files.
+- `/collections`: list, rebuild, retrieve-test, and inspect local Chroma
+  collections.
+- `/documents`: preview markdown, download markdown/docx, verify citations,
+  repair citations, and evaluate documents.
+- `/settings`: view secret-safe settings, health, trace-check, and optional
+  model check.
+
+Core Web API endpoints:
+
+- `GET /api/health`
+- `GET /api/settings`
+- `POST /api/jobs`
+- `GET /api/jobs`
+- `GET /api/jobs/{job_id}`
+- `POST /api/jobs/{job_id}/resume`
+- `POST /api/jobs/{job_id}/cancel`
+- `GET /api/jobs/{job_id}/events`
+- `POST /api/files/upload`
+- `GET /api/files`
+- `DELETE /api/files/{file_id}`
+- `GET /api/collections`
+- `POST /api/collections`
+- `GET /api/collections/{collection}/stats`
+- `DELETE /api/collections/{collection}?confirm=true`
+- `POST /api/collections/{collection}/retrieve`
+- `POST /api/collections/{collection}/export-manifest`
+- `GET /api/documents`
+- `GET /api/documents/{document_id}/preview`
+- `GET /api/documents/{document_id}/download`
+- `POST /api/documents/{document_id}/verify-citations`
+- `POST /api/documents/{document_id}/repair-citations`
+- `POST /api/documents/{document_id}/evaluate`
+- `GET /api/templates`
+- `POST /api/templates/preflight`
+
+Recommended Web flow:
+
+1. Run `writing-agent serve`.
+2. Open `http://127.0.0.1:8000`.
+3. Upload local source documents from the writing page, or place files under
+   `data/`.
+4. Open Collections and rebuild a collection from selected source paths.
+5. Run retrieve sanity checks.
+6. Create a writing job with topic, type, audience, length, style, RAG mode,
+   output format, collection, and optional docx template.
+7. Watch live job events on the job detail page.
+8. If the workflow interrupts, review the outline or draft in the browser and
+   submit resume notes.
+9. Preview the markdown or download the docx from Documents.
+10. Run citation verification, citation repair, and evaluation before delivery.
 
 For quick UI smoke tests without a real model, uncheck `调用真实 LLM`. Production
 quality generation should keep it checked and use `writing-agent check-model`
 first.
+
+Security boundaries:
+
+- `serve` binds to `127.0.0.1` by default.
+- Do not expose the Web Console directly to the public internet.
+- If you bind `--host 0.0.0.0`, you are responsible for network access control.
+- Uploads allow only `.md`, `.txt`, `.docx`, and `.pdf`.
+- Single upload size is limited to 50MB.
+- Web file reads are constrained to `data/`, `outputs/`, and `templates/`.
+- Deletion is only allowed inside `data/uploads/`.
+- API keys and secrets are not shown in the settings page or API responses.
 
 ## Chroma Vector RAG
 
