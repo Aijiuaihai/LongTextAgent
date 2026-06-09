@@ -42,6 +42,9 @@ class JobCreateRequest(BaseModel):
     docx_template: str = ""
     thread_id: str | None = None
     use_llm: bool = True
+    mode: Literal["single", "multi"] = "single"
+    max_agent_rounds: int = 2
+    agent_debug: bool = False
 
     def to_writing_request(self) -> WritingRequest:
         """Convert API payload to core WritingRequest."""
@@ -82,6 +85,9 @@ class JobRecord(BaseModel):
     error_message: str = ""
     interrupt_payload: dict[str, Any] | list[Any] | str | None = None
     events: list[JobEvent] = Field(default_factory=list)
+    agent_results: list[dict[str, Any]] = Field(default_factory=list)
+    supervisor_decisions: list[dict[str, Any]] = Field(default_factory=list)
+    evaluation_result: dict[str, Any] = Field(default_factory=dict)
 
 
 class JobCreateResponse(BaseModel):
@@ -127,4 +133,3 @@ class EvaluateRequest(BaseModel):
     llm_judge: bool = False
     verify_citations: bool = False
     collection: str | None = None
-

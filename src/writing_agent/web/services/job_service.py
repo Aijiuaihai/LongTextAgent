@@ -8,6 +8,7 @@ from typing import Any
 
 from writing_agent.checkpoints import update_thread_metadata
 from writing_agent.config import Settings, get_settings
+from writing_agent.graph.multi_agent_workflow import run_multi_agent_workflow
 from writing_agent.graph.workflow import (
     build_workflow,
     generate_thread_id,
@@ -190,22 +191,38 @@ def run_job(
             settings=resolved_settings,
         )
     try:
-        workflow_runner = runner or run_writing_workflow
-        result = workflow_runner(
-            {
-                "request": payload.to_writing_request(),
-                "output_dir": str(resolved_settings.output_dir),
-                "output_format": payload.output_format,
-                "docx_template": payload.docx_template,
-                "rag_enabled": payload.rag,
-                "rag_mode": payload.rag_mode,
-                "rag_collection": payload.collection,
-                "rag_top_k": payload.top_k,
-            },
-            settings=resolved_settings,
-            thread_id=job.thread_id,
-            use_llm=payload.use_llm,
-        )
+        initial_state = {
+            "request": payload.to_writing_request(),
+            "output_dir": str(resolved_settings.output_dir),
+            "output_format": payload.output_format,
+            "docx_template": payload.docx_template,
+            "rag_enabled": payload.rag,
+            "rag_mode": payload.rag_mode,
+            "rag_collection": payload.collection,
+            "rag_top_k": payload.top_k,
+            "mode": payload.mode,
+        }
+        if runner is not None:
+            result = runner(
+                initial_state,
+                settings=resolved_settings,
+                thread_id=job.thread_id,
+                use_llm=payload.use_llm,
+            )
+        elif payload.mode == "multi":
+            result = run_multi_agent_workflow(
+                initial_state,
+                settings=resolved_settings,
+                thread_id=job.thread_id,
+                max_rounds=payload.max_agent_rounds,
+            )
+        else:
+            result = run_writing_workflow(
+                initial_state,
+                settings=resolved_settings,
+                thread_id=job.thread_id,
+                use_llm=payload.use_llm,
+            )
         for step in WORKFLOW_STEPS:
             add_job_event(
                 job,
@@ -221,6 +238,42 @@ def run_job(
         }
         if result.get("output_path") and not job.output_files:
             job.output_files = {"markdown": str(result["output_path"])}
+        job.agent_results = [
+            item.model_dump(mode="json") if hasattr(item, "model_dump") else item
+            for item in result.get("agent_results", [])
+        ]
+        job.supervisor_decisions = [
+            item.model_dump(mode="json") if hasattr(item, "model_dump") else item
+            for item in result.get("supervisor_decisions", [])
+        ]
+        job.evaluation_result = dict(result.get("evaluation_result", {}) or {})
+        for agent_result in job.agent_results:
+            add_job_event(
+                job,
+                "agent_finished",
+                message=str(agent_result.get("status", "")),
+                step=str(agent_result.get("agent_name", "")),
+                settings=resolved_settings,
+                payload={"agent_result": agent_result},
+            )
+        for decision in job.supervisor_decisions:
+            add_job_event(
+                job,
+                "supervisor_decision",
+                message=str(decision.get("reason", "")),
+                step="supervisor",
+                settings=resolved_settings,
+                payload={"decision": decision},
+            )
+        if job.evaluation_result:
+            add_job_event(
+                job,
+                "evaluation_completed",
+                message="Evaluation completed.",
+                step="evaluator",
+                settings=resolved_settings,
+                payload={"evaluation_result": job.evaluation_result},
+            )
         if result.get("__interrupt__"):
             job.status = "interrupted"
             job.interrupt_payload = result.get("__interrupt__")

@@ -75,6 +75,9 @@ async function initIndex() {
       docx_template: form.get("docx_template") || "",
       thread_id: form.get("thread_id") || null,
       use_llm: form.get("use_llm") === "on",
+      mode: form.get("mode"),
+      max_agent_rounds: Number(form.get("max_agent_rounds") || 2),
+      agent_debug: form.get("agent_debug") === "on",
     };
     const result = await api("/api/jobs", { method: "POST", body: JSON.stringify(payload) });
     location.href = `/jobs/${result.job_id}`;
@@ -94,12 +97,20 @@ async function renderJob(jobId) {
     document.querySelector("#reviewBox").classList.remove("hidden");
     document.querySelector("#interruptPayload").textContent = JSON.stringify(job.interrupt_payload, null, 2);
   }
+  const timeline = document.querySelector("#agentTimeline");
+  if (timeline) {
+    timeline.textContent = JSON.stringify({
+      agent_results: job.agent_results || [],
+      supervisor_decisions: job.supervisor_decisions || [],
+      evaluation_result: job.evaluation_result || {},
+    }, null, 2);
+  }
 }
 
 function startJobEvents(jobId) {
   const log = document.querySelector("#jobLog");
   const source = new EventSource(`/api/jobs/${jobId}/events`);
-  for (const name of ["started", "step_started", "step_finished", "interrupted", "resumed", "exported", "failed", "completed", "cancel_requested"]) {
+  for (const name of ["started", "step_started", "step_finished", "agent_started", "agent_finished", "agent_failed", "supervisor_decision", "citation_audit_completed", "evaluation_completed", "interrupted", "resumed", "exported", "failed", "completed", "cancel_requested"]) {
     source.addEventListener(name, (event) => {
       const item = JSON.parse(event.data);
       log.textContent += `[${item.created_at}] ${item.event} ${item.step || ""} ${item.message || ""}\n`;
