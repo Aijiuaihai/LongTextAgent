@@ -275,6 +275,15 @@ def run_job(
                 settings=resolved_settings,
                 payload={"decision": decision},
             )
+        if job.agent_results:
+            add_job_event(
+                job,
+                "trace_updated",
+                message="Agent trace updated.",
+                step="agents",
+                settings=resolved_settings,
+                payload={"trace": build_job_agent_trace(job)},
+            )
         if job.evaluation_result:
             add_job_event(
                 job,
@@ -386,6 +395,15 @@ def resume_job(
                 settings=resolved_settings,
                 payload={"agent_result": agent_result},
             )
+        if job.agent_results:
+            add_job_event(
+                job,
+                "trace_updated",
+                message="Agent trace updated.",
+                step="agents",
+                settings=resolved_settings,
+                payload={"trace": build_job_agent_trace(job)},
+            )
         add_job_event(
             job,
             "interrupted" if job.status == "interrupted" else "completed",
@@ -430,6 +448,51 @@ def get_job_agent_metrics(job_id: str, settings: Settings | None = None) -> dict
             "evaluation_result": job.evaluation_result,
         },
     ).model_dump(mode="json")
+
+
+def build_job_agent_trace(job: JobRecord) -> dict[str, object]:
+    """Build a graph-friendly agent trace payload."""
+
+    nodes: list[dict[str, object]] = []
+    edges: list[dict[str, object]] = []
+    previous_id = ""
+    for index, result in enumerate(job.agent_results):
+        agent_name = str(result.get("agent_name", f"agent_{index}"))
+        node_id = f"{index}_{agent_name}"
+        nodes.append(
+            {
+                "id": node_id,
+                "label": agent_name,
+                "status": str(result.get("status", "")),
+                "duration_seconds": float(result.get("duration_seconds", 0) or 0),
+                "warnings": list(result.get("warnings", []) or []),
+                "errors": list(result.get("errors", []) or []),
+                "output_summary": str(result.get("output", ""))[:500],
+            }
+        )
+        if previous_id:
+            edges.append({"from": previous_id, "to": node_id, "label": "next"})
+        previous_id = node_id
+    rounds = 0.0
+    if job.agent_metrics:
+        supervisor = job.agent_metrics.get("supervisor", {})
+        if isinstance(supervisor, dict):
+            rounds = float(supervisor.get("rounds_used", 0) or 0)
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "supervisor_decisions": job.supervisor_decisions,
+        "rounds": rounds,
+    }
+
+
+def get_job_agent_trace(job_id: str, settings: Settings | None = None) -> dict[str, object]:
+    """Return graph-friendly agent trace for a web job."""
+
+    job = get_job(job_id, settings)
+    if job is None:
+        raise KeyError(f"Unknown job: {job_id}")
+    return build_job_agent_trace(job)
 
 
 def build_workflow_for_testing() -> object:

@@ -117,7 +117,8 @@ Web Console pages:
 
 - `/`: create writing jobs.
 - `/jobs/<job_id>`: view job status, live SSE events, interrupt payloads, human
-  review textarea, resume, and output files.
+  review textarea, agent timeline, agent trace graph, agent metrics, resume,
+  and output files.
 - `/collections`: list, rebuild, retrieve-test, and inspect local Chroma
   collections.
 - `/documents`: preview markdown, download markdown/docx, verify citations,
@@ -170,8 +171,9 @@ Recommended Web flow:
 10. Run citation verification, citation repair, and evaluation before delivery.
 
 The writing form supports `single` and `multi` workflow modes. In `multi` mode,
-the job detail page shows an agent timeline, current agent, supervisor
-decisions, citation audit summary, review findings, and evaluation result.
+the job detail page shows an agent timeline, trace graph, current agent,
+supervisor decisions, citation audit summary, review findings, agent metrics,
+and evaluation result.
 
 For quick UI smoke tests without a real model, uncheck `调用真实 LLM`. Production
 quality generation should keep it checked and use `writing-agent check-model`
@@ -288,6 +290,63 @@ writing-agent agents trace --thread-id forestry-multi-demo
 Multi-agent mode is bounded by `--max-agent-rounds` and is not an open-ended
 discussion loop. If the maximum is reached, the document is exported with
 unresolved findings in metadata instead of inventing unsupported content.
+
+### Multi-Agent Human Review
+
+Multi-agent mode can pause after planning and before final evaluation/export.
+These pauses are off by default so batch jobs are not interrupted.
+
+```bash
+writing-agent run `
+  --mode multi `
+  --review-outline `
+  --review-final `
+  --thread-id forestry-multi-review `
+  --topic "智慧林务系统建设计划书" `
+  --type proposal `
+  --audience "项目负责人和技术评审" `
+  --length "5000字" `
+  --style "正式、技术导向、少空话" `
+  --collection forestry_demo `
+  --rag `
+  --rag-mode hybrid
+```
+
+Resume from either interrupt:
+
+```bash
+writing-agent resume `
+  --thread-id forestry-multi-review `
+  --review-file review.md
+```
+
+Outline review notes are merged into the plan audit trail. Final review notes
+are retained in the final document metadata and markdown audit section unless
+the reviewer explicitly approves.
+
+### Structured Agent Output
+
+LLM-backed agents use shared structured-output utilities:
+
+- JSON is extracted from pure JSON, fenced `json` markdown, or explanatory text.
+- Parsed output is validated with Pydantic schemas.
+- Invalid JSON triggers a bounded retry with a repair prompt.
+- If retry still fails, agents can fall back to deterministic output and record
+  warnings/errors in `AgentRunResult`.
+- Supervisor decisions can degrade gracefully instead of crashing the full run.
+
+### Agent Metrics
+
+Show persisted metrics for a multi-agent thread:
+
+```bash
+writing-agent agents metrics --thread-id forestry-multi-demo
+writing-agent agents metrics --thread-id forestry-multi-demo --json
+```
+
+Metrics include retrieval counts, planned sections, generated sections,
+citations, invalid citations, severity counts, formatter outputs, evaluator
+scores, supervisor rounds, warnings, errors, and fallback counts.
 
 ## Human Review Resume
 
@@ -610,6 +669,45 @@ Regression rules:
 Comparison output also marks improvements when citation valid rate increases or
 high-severity findings decrease.
 
+## Model Benchmark
+
+`model-benchmark` runs baseline tasks across model, embedding model, RAG mode,
+workflow mode, and max-agent-round combinations. It writes a JSON report, a
+markdown ranking table, and per-combination baseline summaries. Use `--dry-run`
+to inspect combinations without calling any model.
+
+```bash
+writing-agent model-benchmark `
+  --tasks examples/baseline_tasks.jsonl `
+  --models qwen3.6:35b,qwen2.5:32b `
+  --embedding-models qwen3-embedding:8b,bge-m3 `
+  --rag-modes hybrid,vector `
+  --mode multi `
+  --max-agent-rounds 2 `
+  --output-dir outputs/model_benchmark `
+  --dry-run
+```
+
+Actual benchmark runs continue after failed combinations unless `--fail-fast`
+is provided.
+
+## Web Agent Trace
+
+The Web job detail page includes:
+
+- Agent timeline from persisted `AgentRunResult` records.
+- Agent trace graph built from sequential agent runs.
+- Clickable trace nodes showing status, duration, warnings, errors, and output
+  summary.
+- Supervisor decisions and Agent Metrics panels.
+
+The same data is available through:
+
+```bash
+GET /api/jobs/{job_id}/agent-trace
+GET /api/jobs/{job_id}/agent-metrics
+```
+
 ## Optional Integration Tests
 
 Normal checks do not require Ollama, Chroma services, or LangSmith:
@@ -665,7 +763,9 @@ integration tests and does not need a local model service or LangSmith key.
 11. Batch-evaluate outputs.
 12. Run single and multi baselines.
 13. Compare baseline summaries across commits, models, RAG modes, and workflow modes.
-14. Run optional integration tests before release.
+14. Inspect `agents metrics` and Web Agent Trace for failed or slow multi-agent runs.
+15. Run `model-benchmark --dry-run`, then selected real benchmark combinations.
+16. Run optional integration tests before release.
 
 ## Known Limits
 

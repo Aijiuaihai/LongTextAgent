@@ -229,6 +229,33 @@ pre {
   min-height: 220px;
 }
 
+.trace-graph {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+
+.trace-node {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  padding: 8px 10px;
+}
+
+.trace-node.failed {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.trace-edge {
+  color: var(--muted);
+  font-weight: 700;
+}
+
 .hidden {
   display: none;
 }

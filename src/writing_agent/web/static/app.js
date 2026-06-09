@@ -119,12 +119,40 @@ async function renderJob(jobId) {
       metrics.textContent = String(error);
     }
   }
+  const traceGraph = document.querySelector("#agentTraceGraph");
+  if (traceGraph) {
+    try {
+      const trace = await api(`/api/jobs/${jobId}/agent-trace`);
+      traceGraph.innerHTML = "";
+      for (const node of trace.nodes || []) {
+        const button = document.createElement("button");
+        button.className = `trace-node ${node.status || ""}`;
+        button.textContent = `${node.label} ${node.status || ""}`;
+        button.addEventListener("click", () => {
+          document.querySelector("#agentTraceDetail").textContent = JSON.stringify(node, null, 2);
+        });
+        traceGraph.appendChild(button);
+        const edge = (trace.edges || []).find((item) => item.from === node.id);
+        if (edge) {
+          const arrow = document.createElement("span");
+          arrow.className = "trace-edge";
+          arrow.textContent = "→";
+          traceGraph.appendChild(arrow);
+        }
+      }
+      if (!traceGraph.children.length) {
+        traceGraph.textContent = "No agent trace yet.";
+      }
+    } catch (error) {
+      traceGraph.textContent = String(error);
+    }
+  }
 }
 
 function startJobEvents(jobId) {
   const log = document.querySelector("#jobLog");
   const source = new EventSource(`/api/jobs/${jobId}/events`);
-  for (const name of ["started", "step_started", "step_finished", "agent_started", "agent_finished", "agent_failed", "supervisor_decision", "citation_audit_completed", "evaluation_completed", "interrupted", "resumed", "exported", "failed", "completed", "cancel_requested"]) {
+  for (const name of ["started", "step_started", "step_finished", "agent_started", "agent_finished", "agent_failed", "supervisor_decision", "citation_audit_completed", "evaluation_completed", "trace_updated", "interrupted", "resumed", "exported", "failed", "completed", "cancel_requested"]) {
     source.addEventListener(name, (event) => {
       const item = JSON.parse(event.data);
       log.textContent += `[${item.created_at}] ${item.event} ${item.step || ""} ${item.message || ""}\n`;
