@@ -13,6 +13,8 @@ from writing_agent.graph.multi_agent_nodes import (
     evaluator_agent_node,
     export_multi_agent_document_node,
     formatter_agent_node,
+    human_review_final_node,
+    human_review_outline_node,
     load_sources_agent_node,
     planner_agent_node,
     researcher_agent_node,
@@ -56,7 +58,17 @@ class MultiAgentGraphState(TypedDict, total=False):
     rag_mode: str
     rag_top_k: int
     rag_collection: str
+    review_outline: bool
+    review_final: bool
     errors: list[str]
+
+
+def _route_after_planner(state: MultiAgentGraphState) -> str:
+    return "human_review_outline" if state.get("review_outline") else "researcher_agent"
+
+
+def _route_after_formatter(state: MultiAgentGraphState) -> str:
+    return "human_review_final" if state.get("review_final") else "evaluator_agent"
 
 
 def build_multi_agent_workflow(
@@ -74,6 +86,7 @@ def build_multi_agent_workflow(
     builder.add_node("supervisor_start", supervisor_start_node)
     builder.add_node("load_sources", load_sources_agent_node)
     builder.add_node("planner_agent", planner_agent_node)
+    builder.add_node("human_review_outline", human_review_outline_node)
     builder.add_node("researcher_agent", researcher_agent_node)
     builder.add_node("writer_agent", writer_agent_node)
     builder.add_node("citation_auditor_agent", citation_auditor_agent_node)
@@ -81,13 +94,19 @@ def build_multi_agent_workflow(
     builder.add_node("supervisor_review_decision", supervisor_review_decision_node)
     builder.add_node("editor_agent", editor_agent_node)
     builder.add_node("formatter_agent", formatter_agent_node)
+    builder.add_node("human_review_final", human_review_final_node)
     builder.add_node("evaluator_agent", evaluator_agent_node)
     builder.add_node("export_document", export_multi_agent_document_node)
 
     builder.add_edge(START, "supervisor_start")
     builder.add_edge("supervisor_start", "load_sources")
     builder.add_edge("load_sources", "planner_agent")
-    builder.add_edge("planner_agent", "researcher_agent")
+    builder.add_conditional_edges(
+        "planner_agent",
+        _route_after_planner,
+        {"human_review_outline": "human_review_outline", "researcher_agent": "researcher_agent"},
+    )
+    builder.add_edge("human_review_outline", "researcher_agent")
     builder.add_edge("researcher_agent", "writer_agent")
     builder.add_edge("writer_agent", "citation_auditor_agent")
     builder.add_edge("citation_auditor_agent", "reviewer_agent")
@@ -98,7 +117,12 @@ def build_multi_agent_workflow(
         {"editor_agent": "editor_agent", "formatter_agent": "formatter_agent"},
     )
     builder.add_edge("editor_agent", "citation_auditor_agent")
-    builder.add_edge("formatter_agent", "evaluator_agent")
+    builder.add_conditional_edges(
+        "formatter_agent",
+        _route_after_formatter,
+        {"human_review_final": "human_review_final", "evaluator_agent": "evaluator_agent"},
+    )
+    builder.add_edge("human_review_final", "evaluator_agent")
     builder.add_edge("evaluator_agent", "export_document")
     builder.add_edge("export_document", END)
 
@@ -107,6 +131,22 @@ def build_multi_agent_workflow(
     if checkpointer is None:
         checkpointer = get_checkpointer(settings or get_settings())
     return builder.compile(checkpointer=checkpointer)
+
+
+def _state_from_result(
+    app: object,
+    config: dict[str, object],
+    result: dict[str, object],
+) -> MultiAgentGraphState:
+    try:
+        snapshot = app.get_state(config)  # type: ignore[attr-defined]
+        state = dict(snapshot.values)
+        if snapshot.interrupts:
+            state["__interrupt__"] = result.get("__interrupt__", snapshot.interrupts)
+            state["awaiting_human_review"] = True
+        return state  # type: ignore[return-value]
+    except Exception:
+        return result  # type: ignore[return-value]
 
 
 def run_multi_agent_workflow(
@@ -137,8 +177,10 @@ def run_multi_agent_workflow(
     app = build_multi_agent_workflow(settings=resolved_settings, checkpointer=checkpointer)
     config = {"configurable": {"thread_id": resolved_thread_id}}
     result = app.invoke(state, config=config)
+    result = _state_from_result(app, config, result)
     if "output_path" in result:
         result["output_path"] = str(Path(result["output_path"]))
+        result.setdefault("current_step", "multi_agent_export")
     result["thread_id"] = resolved_thread_id
     update_thread_metadata(
         resolved_thread_id,
@@ -148,3 +190,30 @@ def run_multi_agent_workflow(
     )
     return result
 
+
+def resume_multi_agent_workflow(
+    thread_id: str,
+    review_payload: object,
+    *,
+    settings: Settings | None = None,
+    checkpointer: object | bool | None = None,
+) -> MultiAgentGraphState:
+    """Resume an interrupted multi-agent workflow with human review input."""
+
+    try:
+        from langgraph.types import Command
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError("Install langgraph to resume multi-agent workflows.") from exc
+
+    resolved_settings = settings or get_settings()
+    app = build_multi_agent_workflow(settings=resolved_settings, checkpointer=checkpointer)
+    config = {"configurable": {"thread_id": thread_id}}
+    result = app.invoke(Command(resume=review_payload), config=config)
+    result = _state_from_result(app, config, result)
+    if "output_path" in result:
+        result["output_path"] = str(Path(result["output_path"]))
+        result.setdefault("current_step", "multi_agent_export")
+    result["thread_id"] = thread_id
+    interrupted = bool(result.get("__interrupt__"))
+    update_thread_metadata(thread_id, result, interrupted=interrupted, settings=resolved_settings)
+    return result

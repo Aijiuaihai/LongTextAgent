@@ -45,6 +45,8 @@ class JobCreateRequest(BaseModel):
     mode: Literal["single", "multi"] = "single"
     max_agent_rounds: int = 2
     agent_debug: bool = False
+    review_outline: bool = False
+    review_final: bool = False
 
     def to_writing_request(self) -> WritingRequest:
         """Convert API payload to core WritingRequest."""

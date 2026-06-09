@@ -78,6 +78,8 @@ async function initIndex() {
       mode: form.get("mode"),
       max_agent_rounds: Number(form.get("max_agent_rounds") || 2),
       agent_debug: form.get("agent_debug") === "on",
+      review_outline: form.get("review_outline") === "on",
+      review_final: form.get("review_final") === "on",
     };
     const result = await api("/api/jobs", { method: "POST", body: JSON.stringify(payload) });
     location.href = `/jobs/${result.job_id}`;

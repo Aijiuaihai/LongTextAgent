@@ -8,7 +8,10 @@ from typing import Any
 
 from writing_agent.checkpoints import update_thread_metadata
 from writing_agent.config import Settings, get_settings
-from writing_agent.graph.multi_agent_workflow import run_multi_agent_workflow
+from writing_agent.graph.multi_agent_workflow import (
+    resume_multi_agent_workflow,
+    run_multi_agent_workflow,
+)
 from writing_agent.graph.workflow import (
     build_workflow,
     generate_thread_id,
@@ -201,6 +204,8 @@ def run_job(
             "rag_collection": payload.collection,
             "rag_top_k": payload.top_k,
             "mode": payload.mode,
+            "review_outline": payload.review_outline if payload.mode == "multi" else False,
+            "review_final": payload.review_final if payload.mode == "multi" else False,
         }
         if runner is not None:
             result = runner(
@@ -277,10 +282,14 @@ def run_job(
         if result.get("__interrupt__"):
             job.status = "interrupted"
             job.interrupt_payload = result.get("__interrupt__")
+            step = _interrupt_step(job.interrupt_payload)
+            if step:
+                job.current_step = step
             add_job_event(
                 job,
                 "interrupted",
                 message="Workflow interrupted for human review.",
+                step=step,
                 settings=resolved_settings,
             )
         else:
@@ -325,7 +334,19 @@ def resume_job(
     _set_status(job, "running", settings=resolved_settings)
     add_job_event(job, "resumed", message="Human review submitted.", settings=resolved_settings)
     try:
-        result = resume_writing_workflow(job.thread_id, request.review, settings=resolved_settings)
+        payload = JobCreateRequest.model_validate(job.request)
+        if payload.mode == "multi":
+            result = resume_multi_agent_workflow(
+                job.thread_id,
+                request.review,
+                settings=resolved_settings,
+            )
+        else:
+            result = resume_writing_workflow(
+                job.thread_id,
+                request.review,
+                settings=resolved_settings,
+            )
         job.current_step = str(result.get("current_step", ""))
         job.output_files = {
             str(key): str(value)
@@ -335,10 +356,23 @@ def resume_job(
             job.output_files = {"markdown": str(result["output_path"])}
         job.status = "interrupted" if result.get("__interrupt__") else "completed"
         job.interrupt_payload = result.get("__interrupt__")
+        step = _interrupt_step(job.interrupt_payload)
+        if step:
+            job.current_step = step
+        job.agent_results = [
+            item.model_dump(mode="json") if hasattr(item, "model_dump") else item
+            for item in result.get("agent_results", [])
+        ]
+        job.supervisor_decisions = [
+            item.model_dump(mode="json") if hasattr(item, "model_dump") else item
+            for item in result.get("supervisor_decisions", [])
+        ]
+        job.evaluation_result = dict(result.get("evaluation_result", {}) or {})
         add_job_event(
             job,
             "interrupted" if job.status == "interrupted" else "completed",
             message="Workflow resumed.",
+            step=step,
             settings=resolved_settings,
         )
         save_job(job, resolved_settings)
@@ -365,3 +399,21 @@ def build_workflow_for_testing() -> object:
     """Expose workflow construction for tests without changing core imports."""
 
     return build_workflow(checkpointer=False)
+
+
+def _interrupt_step(payload: object) -> str:
+    """Extract a visible interrupt step from LangGraph payload variants."""
+
+    if isinstance(payload, dict):
+        return str(payload.get("step", ""))
+    if isinstance(payload, list) and payload:
+        first = payload[0]
+        if isinstance(first, dict):
+            return str(first.get("step", ""))
+        value = getattr(first, "value", None)
+        if isinstance(value, dict):
+            return str(value.get("step", ""))
+    value = getattr(payload, "value", None)
+    if isinstance(value, dict):
+        return str(value.get("step", ""))
+    return ""

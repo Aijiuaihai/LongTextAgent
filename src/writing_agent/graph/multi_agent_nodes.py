@@ -26,6 +26,7 @@ from writing_agent.config import get_settings
 from writing_agent.models import (
     FinalDocument,
     ReviewFinding,
+    SectionPlan,
     SourceNote,
     WritingPlan,
     WritingRequest,
@@ -84,6 +85,25 @@ def _results(state: dict[str, Any]) -> list[AgentRunResult]:
         item if isinstance(item, AgentRunResult) else AgentRunResult.model_validate(item)
         for item in state.get("agent_results", [])
     ]
+
+
+def _review_text(review: Any) -> str:
+    if review is None:
+        return ""
+    if isinstance(review, str):
+        return review
+    return str(review)
+
+
+def _json_review_text(review: Any) -> str:
+    if isinstance(review, str):
+        return review
+    try:
+        import json
+
+        return json.dumps(review, ensure_ascii=False)
+    except Exception:
+        return str(review)
 
 
 def _record(
@@ -148,6 +168,73 @@ def planner_agent_node(state: dict[str, Any]) -> dict[str, Any]:
     plan = PlannerAgent()._run(_request(state), _source_notes(state))
     record = _record(state, agent="planner", content="Generated writing plan.", output=plan)
     return {**record, "plan": plan}
+
+
+def human_review_outline_node(state: dict[str, Any]) -> dict[str, Any]:
+    """Interrupt multi-agent mode after planning and merge human outline notes."""
+
+    try:
+        from langgraph.types import interrupt
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError("Install langgraph to use multi-agent interrupts.") from exc
+
+    plan = _plan(state)
+    payload = {
+        "step": "multi_agent_outline_review",
+        "message": "Review the multi-agent outline before source retrieval and writing.",
+        "thread_id": state.get("thread_id", ""),
+        "mode": "multi",
+        "current_outline": plan.model_dump(mode="json"),
+        "planner_output": plan.model_dump(mode="json"),
+        "expected_review_format": (
+            "Markdown notes or JSON such as "
+            '{"action": "add_section", "title": "Data security", "goal": "Add security risks."}'
+        ),
+        "allowed_actions": [
+            "approve",
+            "revise_outline",
+            "add_section",
+            "remove_section",
+            "change_audience",
+            "continue",
+        ],
+    }
+    review = interrupt(payload)
+    review_text = _review_text(review)
+    if isinstance(review, dict):
+        action = str(review.get("action", "")).strip()
+        if action == "add_section" and review.get("title"):
+            plan.sections.append(
+                SectionPlan(
+                    title=str(review["title"]),
+                    goal=str(review.get("goal") or review["title"]),
+                    key_points=[str(item) for item in review.get("key_points", [])],
+                    evidence_needed=[str(item) for item in review.get("evidence_needed", [])],
+                    estimated_words=int(review.get("estimated_words", 600) or 600),
+                )
+            )
+        elif action == "remove_section" and review.get("title"):
+            title = str(review["title"]).strip()
+            plan.sections = [section for section in plan.sections if section.title != title]
+    if review_text:
+        plan.risks.append(f"Human multi-agent outline review: {_json_review_text(review)}")
+    messages = _messages(state)
+    messages.append(
+        AgentMessage(
+            role="human",
+            agent_name="human_review_outline",
+            content=_json_review_text(review),
+            metadata={"step": "multi_agent_outline_review"},
+        )
+    )
+    return {
+        "plan": plan,
+        "agent_messages": messages,
+        "human_review_notes": review,
+        "awaiting_human_review": False,
+        "current_step": "multi_agent_outline_review",
+        "current_agent": "human_review_outline",
+    }
 
 
 def researcher_agent_node(state: dict[str, Any]) -> dict[str, Any]:
@@ -306,6 +393,71 @@ def formatter_agent_node(state: dict[str, Any]) -> dict[str, Any]:
         output=document,
     )
     return {**record, "final_document": document}
+
+
+def human_review_final_node(state: dict[str, Any]) -> dict[str, Any]:
+    """Interrupt multi-agent mode for final markdown review before evaluation/export."""
+
+    try:
+        from langgraph.types import interrupt
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError("Install langgraph to use multi-agent interrupts.") from exc
+
+    value = state["final_document"]
+    document = value if isinstance(value, FinalDocument) else FinalDocument.model_validate(value)
+    citation_summary = [
+        audit.model_dump(mode="json") if hasattr(audit, "model_dump") else audit
+        for audit in _audits(state)
+    ]
+    findings_summary = [
+        finding.model_dump(mode="json") if hasattr(finding, "model_dump") else finding
+        for finding in _findings(state)
+    ]
+    payload = {
+        "step": "multi_agent_final_review",
+        "message": "Review the multi-agent final markdown draft before evaluation and export.",
+        "thread_id": state.get("thread_id", ""),
+        "mode": "multi",
+        "current_draft": document.markdown,
+        "citation_audit_summary": citation_summary,
+        "review_findings_summary": findings_summary,
+        "expected_review_format": (
+            "Markdown notes or JSON such as "
+            '{"action": "request_revision", "notes": "Tighten risk controls."}'
+        ),
+        "allowed_actions": [
+            "approve",
+            "request_revision",
+            "mark_section_insufficient",
+            "continue",
+        ],
+    }
+    review = interrupt(payload)
+    review_text = _review_text(review)
+    document.metadata["human_final_review"] = review
+    if review_text and "approve" not in review_text.lower():
+        document.markdown += (
+            "\n\n## Human Review Notes\n\n"
+            "The following reviewer notes were supplied before export and retained "
+            f"for auditability:\n\n{_json_review_text(review)}\n"
+        )
+    messages = _messages(state)
+    messages.append(
+        AgentMessage(
+            role="human",
+            agent_name="human_review_final",
+            content=_json_review_text(review),
+            metadata={"step": "multi_agent_final_review"},
+        )
+    )
+    return {
+        "final_document": document,
+        "agent_messages": messages,
+        "human_review_notes": review,
+        "awaiting_human_review": False,
+        "current_step": "multi_agent_final_review",
+        "current_agent": "human_review_final",
+    }
 
 
 def evaluator_agent_node(state: dict[str, Any]) -> dict[str, Any]:

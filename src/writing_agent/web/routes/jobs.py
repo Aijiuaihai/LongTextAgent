@@ -106,10 +106,12 @@ def generate_compat(
     rag_mode: Annotated[str, Form()] = "hybrid",
     collection: Annotated[str, Form()] = "",
     top_k: Annotated[int, Form()] = 5,
-        use_llm: Annotated[bool, Form()] = True,
-        mode: Annotated[str, Form()] = "single",
-        max_agent_rounds: Annotated[int, Form()] = 2,
-        agent_debug: Annotated[bool, Form()] = False,
+    use_llm: Annotated[bool, Form()] = True,
+    mode: Annotated[str, Form()] = "single",
+    max_agent_rounds: Annotated[int, Form()] = 2,
+    agent_debug: Annotated[bool, Form()] = False,
+    review_outline: Annotated[bool, Form()] = False,
+    review_final: Annotated[bool, Form()] = False,
     request_file: Annotated[UploadFile | None, File()] = None,
     source_files: Annotated[list[UploadFile] | None, File()] = None,
 ) -> dict[str, object]:
@@ -145,6 +147,8 @@ def generate_compat(
         mode="multi" if mode == "multi" else "single",
         max_agent_rounds=max_agent_rounds,
         agent_debug=agent_debug,
+        review_outline=review_outline,
+        review_final=review_final,
     )
     response = create_job(payload, settings=settings)
     background_tasks.add_task(run_job, response.job_id, settings=settings)

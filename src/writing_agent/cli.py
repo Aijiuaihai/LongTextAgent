@@ -27,7 +27,10 @@ from writing_agent.evaluation.compare import (
 )
 from writing_agent.evaluation.evaluator import evaluate_markdown
 from writing_agent.evaluation.llm_judge import judge_document_with_llm
-from writing_agent.graph.multi_agent_workflow import run_multi_agent_workflow
+from writing_agent.graph.multi_agent_workflow import (
+    resume_multi_agent_workflow,
+    run_multi_agent_workflow,
+)
 from writing_agent.graph.workflow import (
     generate_thread_id,
     resume_writing_workflow,
@@ -254,6 +257,20 @@ def run(
         bool,
         typer.Option("--agent-debug/--no-agent-debug", help="Print multi-agent trace summary."),
     ] = False,
+    review_outline: Annotated[
+        bool,
+        typer.Option(
+            "--review-outline/--no-review-outline",
+            help="Pause multi-agent mode after planning.",
+        ),
+    ] = False,
+    review_final: Annotated[
+        bool,
+        typer.Option(
+            "--review-final/--no-review-final",
+            help="Pause multi-agent mode before evaluation.",
+        ),
+    ] = False,
 ) -> None:
     """Run the long-form writing workflow."""
 
@@ -291,6 +308,8 @@ def run(
         "rag_rebuild_index": rebuild_index,
         "rag_top_k": top_k,
         "mode": mode,
+        "review_outline": review_outline if mode == "multi" else False,
+        "review_final": review_final if mode == "multi" else False,
     }
     if mode == "multi":
         result = run_multi_agent_workflow(
@@ -629,7 +648,11 @@ def resume(
 
     settings = get_settings()
     review_payload = _load_review_file(review_file)
-    result = resume_writing_workflow(thread_id, review_payload, settings=settings)
+    thread = inspect_thread(thread_id, settings)
+    if thread and thread.get("mode") == "multi":
+        result = resume_multi_agent_workflow(thread_id, review_payload, settings=settings)
+    else:
+        result = resume_writing_workflow(thread_id, review_payload, settings=settings)
     for error in result.get("errors", []):
         console.print(f"[yellow]Warning:[/yellow] {error}")
     if result.get("awaiting_human_review"):
