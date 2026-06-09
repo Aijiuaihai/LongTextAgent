@@ -90,6 +90,7 @@ class JobRecord(BaseModel):
     agent_results: list[dict[str, Any]] = Field(default_factory=list)
     supervisor_decisions: list[dict[str, Any]] = Field(default_factory=list)
     evaluation_result: dict[str, Any] = Field(default_factory=dict)
+    agent_metrics: dict[str, Any] = Field(default_factory=dict)
 
 
 class JobCreateResponse(BaseModel):

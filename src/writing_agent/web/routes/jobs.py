@@ -13,6 +13,7 @@ from writing_agent.web.services.job_service import (
     cancel_job,
     create_job,
     get_job,
+    get_job_agent_metrics,
     list_jobs,
     resume_job,
     run_job,
@@ -89,6 +90,16 @@ def job_events(job_id: str, request: Request) -> StreamingResponse:
         stream_events(job_id, settings=request.app.state.settings),
         media_type="text/event-stream",
     )
+
+
+@router.get("/jobs/{job_id}/agent-metrics")
+def job_agent_metrics(job_id: str, request: Request) -> dict[str, object]:
+    """Return agent metrics for one job."""
+
+    try:
+        return get_job_agent_metrics(job_id, request.app.state.settings)
+    except KeyError:
+        return JSONResponse({"error": "job not found"}, status_code=404)  # type: ignore[return-value]
 
 
 @router.post("/generate")

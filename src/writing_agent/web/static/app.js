@@ -107,6 +107,18 @@ async function renderJob(jobId) {
       evaluation_result: job.evaluation_result || {},
     }, null, 2);
   }
+  const metrics = document.querySelector("#agentMetrics");
+  if (metrics) {
+    try {
+      metrics.textContent = JSON.stringify(
+        await api(`/api/jobs/${jobId}/agent-metrics`),
+        null,
+        2,
+      );
+    } catch (error) {
+      metrics.textContent = String(error);
+    }
+  }
 }
 
 function startJobEvents(jobId) {

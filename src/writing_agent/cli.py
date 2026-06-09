@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.table import Table
 
 from writing_agent.agents import get_agent_spec, list_agent_specs
+from writing_agent.agents.metrics import summarize_agent_metrics
 from writing_agent.checkpoints import inspect_thread, list_threads
 from writing_agent.config import get_settings
 from writing_agent.evaluation.batch import (
@@ -402,6 +403,53 @@ def agents_trace(
     if summary.get("supervisor_decisions"):
         console.print("[bold]Supervisor decisions[/bold]")
         console.print(summary["supervisor_decisions"])
+
+
+@agents_app.command("metrics")
+def agents_metrics(
+    thread_id: Annotated[str, typer.Option("--thread-id", help="Workflow thread id.")],
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print metrics as JSON."),
+    ] = False,
+) -> None:
+    """Show persisted agent metrics for a thread."""
+
+    summary = inspect_thread(thread_id, get_settings())
+    if summary is None:
+        console.print(f"[red]No metadata found for thread:[/red] {thread_id}")
+        raise typer.Exit(code=1)
+    metrics = summary.get("agent_metrics") or summarize_agent_metrics(
+        thread_id,
+        summary,
+    ).model_dump(mode="json")
+    if json_output:
+        console.print(json.dumps(metrics, ensure_ascii=False, indent=2))
+        return
+    table = Table(title=f"Agent metrics: {thread_id}")
+    table.add_column("agent")
+    table.add_column("metric")
+    table.add_column("value")
+    for agent_name in [
+        "researcher",
+        "planner",
+        "writer",
+        "citation_auditor",
+        "reviewer",
+        "editor",
+        "formatter",
+        "evaluator",
+        "supervisor",
+    ]:
+        values = metrics.get(agent_name, {}) if isinstance(metrics, dict) else {}
+        if isinstance(values, dict):
+            for metric_name, value in values.items():
+                table.add_row(agent_name, str(metric_name), str(value))
+    if isinstance(metrics, dict):
+        table.add_row("total", "agents_run", str(metrics.get("total_agents_run", 0)))
+        table.add_row("total", "errors", str(metrics.get("total_errors", 0)))
+        table.add_row("total", "warnings", str(metrics.get("total_warnings", 0)))
+    console.print(table)
 
 
 @app.command("index")

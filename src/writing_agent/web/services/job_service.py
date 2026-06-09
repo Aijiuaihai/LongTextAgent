@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from writing_agent.agents.metrics import summarize_agent_metrics
 from writing_agent.checkpoints import update_thread_metadata
 from writing_agent.config import Settings, get_settings
 from writing_agent.graph.multi_agent_workflow import (
@@ -252,6 +253,10 @@ def run_job(
             for item in result.get("supervisor_decisions", [])
         ]
         job.evaluation_result = dict(result.get("evaluation_result", {}) or {})
+        job.agent_metrics = dict(
+            result.get("agent_metrics")
+            or summarize_agent_metrics(job.thread_id, result).model_dump(mode="json")
+        )
         for agent_result in job.agent_results:
             add_job_event(
                 job,
@@ -368,6 +373,10 @@ def resume_job(
             for item in result.get("supervisor_decisions", [])
         ]
         job.evaluation_result = dict(result.get("evaluation_result", {}) or {})
+        job.agent_metrics = dict(
+            result.get("agent_metrics")
+            or summarize_agent_metrics(job.thread_id, result).model_dump(mode="json")
+        )
         for agent_result in job.agent_results:
             add_job_event(
                 job,
@@ -402,6 +411,25 @@ def cancel_job(job_id: str, settings: Settings | None = None) -> JobRecord:
     add_job_event(job, "cancel_requested", message="Cancellation requested.", settings=settings)
     save_job(job, settings)
     return job
+
+
+def get_job_agent_metrics(job_id: str, settings: Settings | None = None) -> dict[str, object]:
+    """Return persisted agent metrics for a web job."""
+
+    job = get_job(job_id, settings)
+    if job is None:
+        raise KeyError(f"Unknown job: {job_id}")
+    if job.agent_metrics:
+        return job.agent_metrics
+    return summarize_agent_metrics(
+        job.thread_id,
+        {
+            "mode": job.request.get("mode", "single"),
+            "agent_results": job.agent_results,
+            "supervisor_decisions": job.supervisor_decisions,
+            "evaluation_result": job.evaluation_result,
+        },
+    ).model_dump(mode="json")
 
 
 def build_workflow_for_testing() -> object:

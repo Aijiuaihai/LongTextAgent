@@ -119,6 +119,9 @@ def run_batch_tasks(
                 )
                 == "high"
             )
+            agent_metrics = dict(result.get("agent_metrics", {}) or {})
+            citation_auditor_metrics = dict(agent_metrics.get("citation_auditor", {}) or {})
+            supervisor_metrics = dict(agent_metrics.get("supervisor", {}) or {})
             duration = time.perf_counter() - started
             success += 1
             task_reports.append(
@@ -134,6 +137,15 @@ def run_batch_tasks(
                     "round_count": int(result.get("current_round", 0) or 0),
                     "citation_repair_count": citation_repair_count,
                     "high_severity_findings": high_severity_findings,
+                    "agent_errors": int(agent_metrics.get("total_errors", 0) or 0),
+                    "agent_warnings": int(agent_metrics.get("total_warnings", 0) or 0),
+                    "fallback_count": int(supervisor_metrics.get("fallback_count", 0) or 0),
+                    "citation_auditor_invalid_count": int(
+                        citation_auditor_metrics.get("invalid_citations", 0) or 0
+                    ),
+                    "supervisor_rounds_used": int(
+                        supervisor_metrics.get("rounds_used", 0) or 0
+                    ),
                 }
             )
         except Exception as exc:
@@ -153,6 +165,11 @@ def run_batch_tasks(
                     "round_count": 0,
                     "citation_repair_count": 0,
                     "high_severity_findings": 0,
+                    "agent_errors": 0,
+                    "agent_warnings": 0,
+                    "fallback_count": 0,
+                    "citation_auditor_invalid_count": 0,
+                    "supervisor_rounds_used": 0,
                 }
             )
     report = {
@@ -297,6 +314,38 @@ def build_baseline_summary(
         if result_count
         else 0.0
     )
+    average_agent_errors = (
+        sum(float(item.get("agent_errors", 0) or 0) for item in successful_results) / result_count
+        if result_count
+        else 0.0
+    )
+    average_agent_warnings = (
+        sum(float(item.get("agent_warnings", 0) or 0) for item in successful_results)
+        / result_count
+        if result_count
+        else 0.0
+    )
+    average_fallback_count = (
+        sum(float(item.get("fallback_count", 0) or 0) for item in successful_results)
+        / result_count
+        if result_count
+        else 0.0
+    )
+    average_citation_auditor_invalid_count = (
+        sum(
+            float(item.get("citation_auditor_invalid_count", 0) or 0)
+            for item in successful_results
+        )
+        / result_count
+        if result_count
+        else 0.0
+    )
+    average_supervisor_rounds_used = (
+        sum(float(item.get("supervisor_rounds_used", 0) or 0) for item in successful_results)
+        / result_count
+        if result_count
+        else 0.0
+    )
     return {
         "commit_hash": _git_commit_hash(),
         "model_name": settings.ollama_model
@@ -322,4 +371,9 @@ def build_baseline_summary(
         "average_citation_repair_count": average_citation_repair_count,
         "average_high_severity_findings": average_high_severity_findings,
         "average_run_duration_seconds": average_run_duration_seconds,
+        "average_agent_errors": average_agent_errors,
+        "average_agent_warnings": average_agent_warnings,
+        "average_fallback_count": average_fallback_count,
+        "average_citation_auditor_invalid_count": average_citation_auditor_invalid_count,
+        "average_supervisor_rounds_used": average_supervisor_rounds_used,
     }
