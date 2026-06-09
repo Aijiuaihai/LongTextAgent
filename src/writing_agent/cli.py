@@ -873,6 +873,14 @@ def batch_run(
         str,
         typer.Option("--output-format", help="markdown, docx, or both."),
     ] = "markdown",
+    mode: Annotated[
+        str,
+        typer.Option("--mode", help="single or multi workflow mode."),
+    ] = "single",
+    max_agent_rounds: Annotated[
+        int,
+        typer.Option("--max-agent-rounds", help="Maximum multi-agent review/edit rounds."),
+    ] = 2,
     trace: Annotated[
         bool,
         typer.Option("--trace/--no-trace", help="Enable optional LangSmith tracing."),
@@ -890,6 +898,8 @@ def batch_run(
         rag_mode=rag_mode,
         collection=collection,
         output_format=output_format,
+        mode=mode,
+        max_agent_rounds=max_agent_rounds,
         settings=get_settings(),
     )
     table = Table(title="Batch Run")
@@ -916,6 +926,14 @@ def baseline_run(
     output_dir: Annotated[Path, typer.Option("--output-dir", help="Baseline output root.")] = (
         Path("outputs/baseline")
     ),
+    mode: Annotated[
+        str,
+        typer.Option("--mode", help="single or multi workflow mode."),
+    ] = "single",
+    max_agent_rounds: Annotated[
+        int,
+        typer.Option("--max-agent-rounds", help="Maximum multi-agent review/edit rounds."),
+    ] = 2,
 ) -> None:
     """Run a fixed baseline batch and write baseline_summary.json."""
 
@@ -926,6 +944,8 @@ def baseline_run(
         rag_mode=rag_mode,
         collection=collection,
         output_format="markdown",
+        mode=mode,
+        max_agent_rounds=max_agent_rounds,
         settings=settings,
     )
     summary = build_baseline_summary(
@@ -933,6 +953,8 @@ def baseline_run(
         rag_mode=rag_mode,
         collection=collection,
         settings=settings,
+        mode=mode,
+        max_agent_rounds=max_agent_rounds,
     )
     summary_path = Path(result["run_dir"]) / "baseline_summary.json"
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -984,10 +1006,15 @@ def baseline_compare(
             "delta_insufficient_evidence_count",
             f"{result.delta_insufficient_evidence_count:.4f}",
         )
+        table.add_row("delta_high_severity_findings", f"{result.delta_high_severity_findings:.4f}")
+        table.add_row("delta_run_duration_seconds", f"{result.delta_run_duration_seconds:.4f}")
         table.add_row("regression_flags", str(len(result.regression_flags)))
+        table.add_row("improvements", str(len(result.improvements)))
         console.print(table)
         for flag in result.regression_flags:
             console.print(f"[yellow]{flag.severity}[/yellow] {flag.metric}: {flag.message}")
+        for improvement in result.improvements:
+            console.print(f"[green]improvement[/green] {improvement}")
     if fail_on_regression and result.status == "fail":
         raise typer.Exit(code=1)
 

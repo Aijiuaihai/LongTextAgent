@@ -10,6 +10,7 @@ from typing import Any
 from writing_agent.config import Settings, get_settings
 from writing_agent.evaluation.batch_report import utc_now, write_failed_tasks, write_json
 from writing_agent.evaluation.evaluator import evaluate_markdown
+from writing_agent.graph.multi_agent_workflow import run_multi_agent_workflow
 from writing_agent.graph.workflow import run_writing_workflow
 from writing_agent.models import WritingRequest
 from writing_agent.verification.verifier import verify_citations_in_file
@@ -38,6 +39,8 @@ def run_batch_tasks(
     rag_mode: str = "hybrid",
     collection: str = "",
     output_format: str = "markdown",
+    mode: str = "single",
+    max_agent_rounds: int = 2,
     settings: Settings | None = None,
     run_id: str | None = None,
 ) -> dict[str, Any]:
@@ -70,20 +73,53 @@ def run_batch_tasks(
                     "source_paths": task.get("source_paths", []),
                 }
             )
-            result = run_writing_workflow(
-                {
-                    "request": request,
-                    "output_dir": str(task_output_dir),
-                    "output_format": output_format,
-                    "rag_enabled": True,
-                    "rag_mode": rag_mode,
-                    "rag_collection": collection,
-                    "rag_top_k": int(task.get("top_k", 5)),
-                },
-                settings=resolved_settings,
-                thread_id=thread_id,
-            )
+            initial_state = {
+                "request": request,
+                "output_dir": str(task_output_dir),
+                "output_format": output_format,
+                "rag_enabled": True,
+                "rag_mode": rag_mode,
+                "rag_collection": collection,
+                "rag_top_k": int(task.get("top_k", 5)),
+            }
+            if mode == "multi":
+                result = run_multi_agent_workflow(
+                    initial_state,
+                    settings=resolved_settings,
+                    thread_id=thread_id,
+                    max_rounds=max_agent_rounds,
+                )
+            else:
+                result = run_writing_workflow(
+                    initial_state,
+                    settings=resolved_settings,
+                    thread_id=thread_id,
+                )
             output_file = str(result.get("output_path") or "")
+            agent_results = result.get("agent_results") or []
+            citation_audits = result.get("citation_audits") or []
+            review_findings = result.get("review_findings") or []
+            citation_repair_count = 0
+            for audit in citation_audits:
+                if isinstance(audit, dict):
+                    citation_repair_count += int(audit.get("repaired_citations", 0) or 0)
+                    citation_repair_count += int(audit.get("downgraded_citations", 0) or 0)
+                else:
+                    citation_repair_count += int(getattr(audit, "repaired_citations", 0) or 0)
+                    citation_repair_count += int(
+                        getattr(audit, "downgraded_citations", 0) or 0
+                    )
+            high_severity_findings = sum(
+                1
+                for finding in review_findings
+                if (
+                    getattr(finding, "severity", "")
+                    if not isinstance(finding, dict)
+                    else finding.get("severity", "")
+                )
+                == "high"
+            )
+            duration = time.perf_counter() - started
             success += 1
             task_reports.append(
                 {
@@ -91,11 +127,17 @@ def run_batch_tasks(
                     "status": "success",
                     "output_file": output_file,
                     "error_message": "",
-                    "duration_seconds": time.perf_counter() - started,
+                    "duration_seconds": duration,
                     "thread_id": thread_id,
+                    "mode": mode,
+                    "agent_count": len(agent_results),
+                    "round_count": int(result.get("current_round", 0) or 0),
+                    "citation_repair_count": citation_repair_count,
+                    "high_severity_findings": high_severity_findings,
                 }
             )
         except Exception as exc:
+            duration = time.perf_counter() - started
             failure += 1
             failed_tasks.append(task)
             task_reports.append(
@@ -104,8 +146,13 @@ def run_batch_tasks(
                     "status": "failed",
                     "output_file": "",
                     "error_message": str(exc),
-                    "duration_seconds": time.perf_counter() - started,
+                    "duration_seconds": duration,
                     "thread_id": thread_id,
+                    "mode": mode,
+                    "agent_count": 0,
+                    "round_count": 0,
+                    "citation_repair_count": 0,
+                    "high_severity_findings": 0,
                 }
             )
     report = {
@@ -127,6 +174,8 @@ def run_batch_tasks(
             "rag_mode": rag_mode,
             "collection": collection,
             "output_format": output_format,
+            "mode": mode,
+            "max_agent_rounds": max_agent_rounds,
         },
     )
     return {
@@ -199,6 +248,8 @@ def build_baseline_summary(
     rag_mode: str,
     collection: str,
     settings: Settings,
+    mode: str = "single",
+    max_agent_rounds: int = 2,
 ) -> dict[str, Any]:
     """Build baseline summary for a completed batch run."""
 
@@ -215,6 +266,37 @@ def build_baseline_summary(
     average_rule_score = (
         sum(_rule_score(item) for item in evaluations) / len(evaluations) if evaluations else 0.0
     )
+    task_results = batch_result.get("results", [])
+    successful_results = [item for item in task_results if item.get("status") == "success"]
+    result_count = len(successful_results)
+    average_agent_count = (
+        sum(float(item.get("agent_count", 0) or 0) for item in successful_results) / result_count
+        if result_count
+        else 0.0
+    )
+    average_rounds = (
+        sum(float(item.get("round_count", 0) or 0) for item in successful_results) / result_count
+        if result_count
+        else 0.0
+    )
+    average_citation_repair_count = (
+        sum(float(item.get("citation_repair_count", 0) or 0) for item in successful_results)
+        / result_count
+        if result_count
+        else 0.0
+    )
+    average_high_severity_findings = (
+        sum(float(item.get("high_severity_findings", 0) or 0) for item in successful_results)
+        / result_count
+        if result_count
+        else 0.0
+    )
+    average_run_duration_seconds = (
+        sum(float(item.get("duration_seconds", 0) or 0) for item in successful_results)
+        / result_count
+        if result_count
+        else 0.0
+    )
     return {
         "commit_hash": _git_commit_hash(),
         "model_name": settings.ollama_model
@@ -223,6 +305,8 @@ def build_baseline_summary(
         "embedding_model": settings.ollama_embedding_model
         if settings.embedding_provider == "ollama"
         else settings.openai_model,
+        "mode": mode,
+        "max_agent_rounds": max_agent_rounds,
         "rag_mode": rag_mode,
         "collection": collection,
         "task_count": batch_result["success"] + batch_result["failure"],
@@ -233,4 +317,9 @@ def build_baseline_summary(
         "average_insufficient_evidence_count": evaluation["summary"][
             "average_insufficient_evidence_count"
         ],
+        "average_agent_count": average_agent_count,
+        "average_rounds": average_rounds,
+        "average_citation_repair_count": average_citation_repair_count,
+        "average_high_severity_findings": average_high_severity_findings,
+        "average_run_duration_seconds": average_run_duration_seconds,
     }

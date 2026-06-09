@@ -161,13 +161,17 @@ Recommended Web flow:
    `data/`.
 4. Open Collections and rebuild a collection from selected source paths.
 5. Run retrieve sanity checks.
-6. Create a writing job with topic, type, audience, length, style, RAG mode,
-   output format, collection, and optional docx template.
+6. Create a writing job with topic, type, audience, length, style, workflow
+   mode, RAG mode, output format, collection, and optional docx template.
 7. Watch live job events on the job detail page.
 8. If the workflow interrupts, review the outline or draft in the browser and
    submit resume notes.
 9. Preview the markdown or download the docx from Documents.
 10. Run citation verification, citation repair, and evaluation before delivery.
+
+The writing form supports `single` and `multi` workflow modes. In `multi` mode,
+the job detail page shows an agent timeline, current agent, supervisor
+decisions, citation audit summary, review findings, and evaluation result.
 
 For quick UI smoke tests without a real model, uncheck `调用真实 LLM`. Production
 quality generation should keep it checked and use `writing-agent check-model`
@@ -233,6 +237,57 @@ writing-agent run `
 `--output-format` supports `markdown`, `docx`, and `both`. The docx export
 includes a title page, generation notes, heading mapping, paragraphs, ordered and
 unordered lists, simple markdown tables, header, and footer.
+
+## Single Pipeline vs Multi-Agent Mode
+
+`single` mode is the original staged LangGraph pipeline. It is stable, faster,
+and suitable for ordinary report generation. `multi` mode keeps the same RAG,
+checkpoint, export, citation verification, Web Console, and baseline systems,
+but routes work through bounded role agents and a supervisor. It is more
+auditable and stricter about citations and review feedback, but slower.
+
+Run multi-agent generation:
+
+```bash
+writing-agent run `
+  --mode multi `
+  --topic "智慧林务系统建设计划书" `
+  --type proposal `
+  --audience "项目负责人和技术评审" `
+  --length "5000字" `
+  --style "正式、技术导向、少空话" `
+  --collection forestry_demo `
+  --rag `
+  --rag-mode hybrid `
+  --top-k 5 `
+  --output-format both `
+  --thread-id forestry-multi-demo `
+  --max-agent-rounds 2
+```
+
+Agent roles:
+
+- `ResearcherAgent`: retrieves existing source chunks and cannot write body text.
+- `PlannerAgent`: creates the structured outline and section tasks.
+- `WriterAgent`: writes sections from evidence packs using `[source: path#chunk]`.
+- `CitationAuditorAgent`: verifies or downgrades invalid citations.
+- `ReviewerAgent`: checks structure, logic, repetition, empty phrasing, gaps, and risks.
+- `EditorAgent`: revises from findings without changing facts or inventing citations.
+- `FormatterAgent`: assembles markdown/docx and applies templates.
+- `EvaluatorAgent`: runs rule evaluation, citation checks, and optional judge hooks.
+- `SupervisorAgent`: limits rounds, routes repair/review/edit decisions, and records warnings.
+
+Inspect available agents:
+
+```bash
+writing-agent agents list
+writing-agent agents inspect --agent writer
+writing-agent agents trace --thread-id forestry-multi-demo
+```
+
+Multi-agent mode is bounded by `--max-agent-rounds` and is not an open-ended
+discussion loop. If the maximum is reached, the document is exported with
+unresolved findings in metadata instead of inventing unsupported content.
 
 ## Human Review Resume
 
@@ -502,15 +557,37 @@ writing-agent baseline-run `
   --tasks examples/baseline_tasks.jsonl `
   --collection forestry_demo `
   --rag-mode hybrid `
+  --mode single `
   --output-dir outputs/baseline
 ```
 
 The run writes `baseline_summary.json` with commit hash, model name, embedding
 model, RAG mode, collection, success/failure counts, average rule score,
-average citation valid rate, and average insufficient-evidence count.
+average citation valid rate, average insufficient-evidence count, workflow
+mode, max agent rounds, average agent count, average rounds, average citation
+repair count, average high-severity findings, and average run duration.
 
 Use baseline summaries to compare different commits, models, embedding models,
-and RAG modes.
+RAG modes, `single` vs `multi`, and different `--max-agent-rounds` values.
+
+Single vs multi baseline example:
+
+```bash
+writing-agent baseline-run `
+  --tasks examples/baseline_tasks.jsonl `
+  --collection forestry_demo `
+  --rag-mode hybrid `
+  --mode single `
+  --output-dir outputs/baseline/single
+
+writing-agent baseline-run `
+  --tasks examples/baseline_tasks.jsonl `
+  --collection forestry_demo `
+  --rag-mode hybrid `
+  --mode multi `
+  --max-agent-rounds 2 `
+  --output-dir outputs/baseline/multi
+```
 
 Compare two baseline summaries:
 
@@ -527,6 +604,11 @@ Regression rules:
 - `average_citation_valid_rate` drops by more than 3%: warning.
 - `average_insufficient_evidence_count` rises by more than 20%: warning.
 - `failed_count` increases: fail.
+- Multi-agent average duration exceeds single mode by more than 3x while rule
+  score improves by less than 3%: warning.
+
+Comparison output also marks improvements when citation valid rate increases or
+high-severity findings decrease.
 
 ## Optional Integration Tests
 
@@ -573,16 +655,17 @@ integration tests and does not need a local model service or LangSmith key.
 1. Index the collection.
 2. Retrieve a few sanity-check chunks.
 3. Run one document.
-4. Verify citations.
-5. Repair citations if verification fails.
-6. Evaluate the document.
-7. Preflight the docx template.
-8. Export docx.
-9. Run a batch.
-10. Batch-evaluate outputs.
-11. Run baseline.
-12. Compare baseline summaries across commits, models, and RAG modes.
-13. Run optional integration tests before release.
+4. For high-responsibility documents, rerun with `--mode multi`.
+5. Verify citations.
+6. Repair citations if verification fails.
+7. Evaluate the document.
+8. Preflight the docx template.
+9. Export docx.
+10. Run a batch.
+11. Batch-evaluate outputs.
+12. Run single and multi baselines.
+13. Compare baseline summaries across commits, models, RAG modes, and workflow modes.
+14. Run optional integration tests before release.
 
 ## Known Limits
 
@@ -590,4 +673,8 @@ integration tests and does not need a local model service or LangSmith key.
 - The current hybrid fusion strategy is intentionally simple.
 - LLM Judge is optional and should not replace human review.
 - docx export supports common markdown structures, not full markdown syntax.
-- Web search, advanced citation verification, and styled docx templates remain future work.
+- Multi-agent mode is slower and has more failure surfaces; use baseline results
+  to justify it for each document class.
+- More agents do not guarantee higher quality if the source material is weak.
+- Citation verifier and repair remain the final safety net for references.
+- Web search and deeper domain-specific eval sets remain future work.

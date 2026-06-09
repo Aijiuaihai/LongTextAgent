@@ -27,7 +27,10 @@ class BaselineComparisonResult(BaseModel):
     delta_rule_score: float
     delta_citation_valid_rate: float
     delta_insufficient_evidence_count: float
+    delta_high_severity_findings: float = 0.0
+    delta_run_duration_seconds: float = 0.0
     regression_flags: list[RegressionFlag] = Field(default_factory=list)
+    improvements: list[str] = Field(default_factory=list)
     status: Literal["pass", "warning", "fail"] = "pass"
 
 
@@ -65,7 +68,12 @@ def compare_baseline_summaries(
     candidate_insufficient = float(
         candidate.get("average_insufficient_evidence_count", 0.0) or 0.0
     )
+    base_high = float(base.get("average_high_severity_findings", 0.0) or 0.0)
+    candidate_high = float(candidate.get("average_high_severity_findings", 0.0) or 0.0)
+    base_duration = float(base.get("average_run_duration_seconds", 0.0) or 0.0)
+    candidate_duration = float(candidate.get("average_run_duration_seconds", 0.0) or 0.0)
     flags: list[RegressionFlag] = []
+    improvements: list[str] = []
     if _relative_drop(base_rule, candidate_rule) > 0.05:
         flags.append(
             RegressionFlag(
@@ -108,6 +116,29 @@ def compare_baseline_summaries(
                 candidate_value=candidate_failed,
             )
         )
+    if (
+        base.get("mode") == "single"
+        and candidate.get("mode") == "multi"
+        and base_duration > 0
+        and candidate_duration > base_duration * 3
+        and candidate_rule - base_rule < 0.03
+    ):
+        flags.append(
+            RegressionFlag(
+                metric="average_run_duration_seconds",
+                severity="warning",
+                message=(
+                    "Multi-agent run is more than 3x slower without at least "
+                    "3% rule-score improvement."
+                ),
+                base_value=base_duration,
+                candidate_value=candidate_duration,
+            )
+        )
+    if candidate_citation > base_citation:
+        improvements.append("citation_valid_rate improved")
+    if candidate_high < base_high:
+        improvements.append("high_severity_findings decreased")
 
     status: Literal["pass", "warning", "fail"] = "pass"
     if any(flag.severity == "fail" for flag in flags):
@@ -122,7 +153,10 @@ def compare_baseline_summaries(
         delta_rule_score=candidate_rule - base_rule,
         delta_citation_valid_rate=candidate_citation - base_citation,
         delta_insufficient_evidence_count=candidate_insufficient - base_insufficient,
+        delta_high_severity_findings=candidate_high - base_high,
+        delta_run_duration_seconds=candidate_duration - base_duration,
         regression_flags=flags,
+        improvements=improvements,
         status=status,
     )
 
@@ -136,6 +170,8 @@ def render_baseline_comparison(result: BaselineComparisonResult) -> dict[str, An
             "commit_hash": result.base.get("commit_hash", ""),
             "model_name": result.base.get("model_name", ""),
             "embedding_model": result.base.get("embedding_model", ""),
+            "mode": result.base.get("mode", "single"),
+            "max_agent_rounds": result.base.get("max_agent_rounds", 0),
             "rag_mode": result.base.get("rag_mode", ""),
             "collection": result.base.get("collection", ""),
             "task_count": result.base.get("task_count", 0),
@@ -146,6 +182,8 @@ def render_baseline_comparison(result: BaselineComparisonResult) -> dict[str, An
             "commit_hash": result.candidate.get("commit_hash", ""),
             "model_name": result.candidate.get("model_name", ""),
             "embedding_model": result.candidate.get("embedding_model", ""),
+            "mode": result.candidate.get("mode", "single"),
+            "max_agent_rounds": result.candidate.get("max_agent_rounds", 0),
             "rag_mode": result.candidate.get("rag_mode", ""),
             "collection": result.candidate.get("collection", ""),
             "task_count": result.candidate.get("task_count", 0),
@@ -155,5 +193,8 @@ def render_baseline_comparison(result: BaselineComparisonResult) -> dict[str, An
         "delta_rule_score": result.delta_rule_score,
         "delta_citation_valid_rate": result.delta_citation_valid_rate,
         "delta_insufficient_evidence_count": result.delta_insufficient_evidence_count,
+        "delta_high_severity_findings": result.delta_high_severity_findings,
+        "delta_run_duration_seconds": result.delta_run_duration_seconds,
         "regression_flags": [flag.model_dump(mode="json") for flag in result.regression_flags],
+        "improvements": result.improvements,
     }

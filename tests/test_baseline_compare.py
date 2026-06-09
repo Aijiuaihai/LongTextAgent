@@ -44,3 +44,31 @@ def test_compare_baseline_summaries_flags_regressions(tmp_path) -> None:
     assert any(flag.metric == "failed_count" for flag in result.regression_flags)
     assert rendered["status"] == "fail"
 
+
+def test_compare_baseline_summaries_reports_multi_agent_efficiency_warning(tmp_path) -> None:
+    base = tmp_path / "base.json"
+    candidate = tmp_path / "candidate.json"
+    _write_summary(
+        base,
+        mode="single",
+        average_run_duration_seconds=10,
+        average_high_severity_findings=2,
+    )
+    _write_summary(
+        candidate,
+        mode="multi",
+        max_agent_rounds=2,
+        average_rule_score=0.91,
+        average_citation_valid_rate=0.98,
+        average_high_severity_findings=1,
+        average_run_duration_seconds=35,
+    )
+
+    result = compare_baseline_summaries(base, candidate)
+    rendered = render_baseline_comparison(result)
+
+    assert result.status == "warning"
+    assert any(flag.metric == "average_run_duration_seconds" for flag in result.regression_flags)
+    assert "citation_valid_rate improved" in result.improvements
+    assert "high_severity_findings decreased" in result.improvements
+    assert rendered["candidate"]["mode"] == "multi"
