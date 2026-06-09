@@ -5,7 +5,9 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from writing_agent.agents.parser import parse_pydantic_output
 from writing_agent.agents.protocols import AgentRunResult
+from writing_agent.agents.retry import run_with_structured_retry
 
 
 class AgentSpec(BaseModel):
@@ -54,6 +56,27 @@ class BaseWritingAgent:
                 duration_seconds=time.perf_counter() - started,
             )
 
+    def parse_structured_output(self, raw_text: str, model_cls: type[BaseModel]) -> BaseModel:
+        """Parse one structured LLM response with the shared parser."""
+
+        return parse_pydantic_output(raw_text, model_cls)
+
+    def run_structured_retry(
+        self,
+        call_llm_fn: Any,
+        output_model: type[BaseModel],
+        *,
+        max_retries: int = 2,
+    ) -> AgentRunResult:
+        """Run an LLM-backed agent step through the shared retry handler."""
+
+        return run_with_structured_retry(
+            self.spec.name,
+            call_llm_fn,
+            output_model,
+            max_retries=max_retries,
+        )
+
     def _run(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
@@ -78,4 +101,3 @@ def get_agent_spec(name: str) -> AgentSpec | None:
     """Get one registered agent spec."""
 
     return AGENT_SPECS.get(name)
-
