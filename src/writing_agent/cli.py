@@ -13,6 +13,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from writing_agent.agents import get_agent_spec, list_agent_specs
 from writing_agent.checkpoints import inspect_thread, list_threads
 from writing_agent.config import get_settings
 from writing_agent.evaluation.batch import (
@@ -26,6 +27,7 @@ from writing_agent.evaluation.compare import (
 )
 from writing_agent.evaluation.evaluator import evaluate_markdown
 from writing_agent.evaluation.llm_judge import judge_document_with_llm
+from writing_agent.graph.multi_agent_workflow import run_multi_agent_workflow
 from writing_agent.graph.workflow import (
     generate_thread_id,
     resume_writing_workflow,
@@ -57,8 +59,10 @@ from writing_agent.verification.verifier import verify_citations_in_file
 app = typer.Typer(help="Long-form writing agent CLI.", no_args_is_help=True)
 collections_app = typer.Typer(help="Manage local Chroma collections.")
 template_app = typer.Typer(help="Inspect and validate DOCX templates.")
+agents_app = typer.Typer(help="Inspect multi-agent roles and traces.")
 app.add_typer(collections_app, name="collections")
 app.add_typer(template_app, name="template")
+app.add_typer(agents_app, name="agents")
 console = Console()
 
 
@@ -238,6 +242,18 @@ def run(
         typer.Option("--rebuild-index/--no-rebuild-index", help="Rebuild collection from sources."),
     ] = False,
     top_k: Annotated[int, typer.Option("--top-k", help="Retrieved source chunks per section.")] = 5,
+    mode: Annotated[
+        str,
+        typer.Option("--mode", help="single or multi workflow mode."),
+    ] = "single",
+    max_agent_rounds: Annotated[
+        int,
+        typer.Option("--max-agent-rounds", help="Maximum bounded multi-agent edit rounds."),
+    ] = 2,
+    agent_debug: Annotated[
+        bool,
+        typer.Option("--agent-debug/--no-agent-debug", help="Print multi-agent trace summary."),
+    ] = False,
 ) -> None:
     """Run the long-form writing workflow."""
 
@@ -262,23 +278,36 @@ def run(
     resolved_thread_id = thread_id or generate_thread_id()
     console.print("[bold]Starting writing workflow[/bold]")
     console.print(f"[bold]thread_id:[/bold] {resolved_thread_id}")
-    result = run_writing_workflow(
-        {
-            "request": request,
-            "output_format": output_format,
-            "output_dir": str(settings.output_dir),
-            "docx_template": str(docx_template) if docx_template else "",
-            "pause_after_outline": pause_after_outline,
-            "pause_before_export": pause_before_export,
-            "rag_enabled": rag,
-            "rag_mode": rag_mode,
-            "rag_collection": collection or "",
-            "rag_rebuild_index": rebuild_index,
-            "rag_top_k": top_k,
-        },
-        settings=settings,
-        thread_id=resolved_thread_id,
-    )
+    initial_state = {
+        "request": request,
+        "output_format": output_format,
+        "output_dir": str(settings.output_dir),
+        "docx_template": str(docx_template) if docx_template else "",
+        "pause_after_outline": pause_after_outline,
+        "pause_before_export": pause_before_export,
+        "rag_enabled": rag,
+        "rag_mode": rag_mode,
+        "rag_collection": collection or "",
+        "rag_rebuild_index": rebuild_index,
+        "rag_top_k": top_k,
+        "mode": mode,
+    }
+    if mode == "multi":
+        result = run_multi_agent_workflow(
+            initial_state,
+            settings=settings,
+            thread_id=resolved_thread_id,
+            max_rounds=max_agent_rounds,
+        )
+    elif mode == "single":
+        result = run_writing_workflow(
+            initial_state,
+            settings=settings,
+            thread_id=resolved_thread_id,
+        )
+    else:
+        console.print("[red]--mode must be single or multi.[/red]")
+        raise typer.Exit(code=1)
     for error in result.get("errors", []):
         console.print(f"[yellow]Warning:[/yellow] {error}")
     if result.get("awaiting_human_review"):
@@ -293,6 +322,67 @@ def run(
     else:
         output_paths = result.get("output_paths")
         console.print(f"[green]Exported:[/green] {output_paths or result.get('output_path')}")
+    if agent_debug and result.get("agent_results"):
+        console.print("[bold]Agent results[/bold]")
+        for item in result.get("agent_results", []):
+            console.print(item)
+
+
+@agents_app.command("list")
+def agents_list() -> None:
+    """List available multi-agent roles."""
+
+    table = Table(title="Multi-agent roles")
+    table.add_column("agent")
+    table.add_column("responsibility")
+    table.add_column("input")
+    table.add_column("output")
+    for spec in list_agent_specs():
+        table.add_row(spec.name, spec.responsibility, spec.input_schema, spec.output_schema)
+    console.print(table)
+
+
+@agents_app.command("inspect")
+def agents_inspect(
+    agent: Annotated[str, typer.Option("--agent", help="Agent name.")],
+) -> None:
+    """Inspect one multi-agent role."""
+
+    spec = get_agent_spec(agent)
+    if spec is None:
+        console.print(f"[red]Unknown agent:[/red] {agent}")
+        raise typer.Exit(code=1)
+    console.print(json.dumps(spec.model_dump(mode="json"), ensure_ascii=False, indent=2))
+
+
+@agents_app.command("trace")
+def agents_trace(
+    thread_id: Annotated[str, typer.Option("--thread-id", help="Workflow thread id.")],
+) -> None:
+    """Show persisted multi-agent trace summary for a thread."""
+
+    summary = inspect_thread(thread_id, get_settings())
+    if summary is None:
+        console.print(f"[red]No metadata found for thread:[/red] {thread_id}")
+        raise typer.Exit(code=1)
+    table = Table(title=f"Agent trace: {thread_id}")
+    table.add_column("agent")
+    table.add_column("status")
+    table.add_column("duration")
+    table.add_column("warnings")
+    table.add_column("errors")
+    for item in summary.get("agent_results", []):
+        table.add_row(
+            str(item.get("agent_name", "")),
+            str(item.get("status", "")),
+            f"{float(item.get('duration_seconds', 0) or 0):.3f}",
+            str(len(item.get("warnings", []))),
+            str(len(item.get("errors", []))),
+        )
+    console.print(table)
+    if summary.get("supervisor_decisions"):
+        console.print("[bold]Supervisor decisions[/bold]")
+        console.print(summary["supervisor_decisions"])
 
 
 @app.command("index")

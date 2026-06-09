@@ -61,6 +61,16 @@ def summarize_state(thread_id: str, state: dict[str, Any], interrupted: bool) ->
     section_drafts = state.get("section_drafts") or []
     review_findings = state.get("review_findings") or []
     final_document = state.get("final_document")
+
+    def _json_safe(value: Any) -> Any:
+        if hasattr(value, "model_dump"):
+            return value.model_dump(mode="json")
+        if isinstance(value, list):
+            return [_json_safe(item) for item in value]
+        if isinstance(value, dict):
+            return {str(key): _json_safe(item) for key, item in value.items()}
+        return value
+
     return {
         "thread_id": thread_id,
         "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -71,6 +81,10 @@ def summarize_state(thread_id: str, state: dict[str, Any], interrupted: bool) ->
         "review_finding_count": len(review_findings),
         "final_document_exists": final_document is not None,
         "output_path": state.get("output_path", ""),
+        "mode": state.get("mode", "multi" if state.get("agent_results") else "single"),
+        "agent_results": _json_safe(state.get("agent_results", [])),
+        "supervisor_decisions": _json_safe(state.get("supervisor_decisions", [])),
+        "evaluation_result": _json_safe(state.get("evaluation_result", {})),
     }
 
 
