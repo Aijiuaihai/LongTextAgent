@@ -5,6 +5,7 @@ from typing import Any
 
 from typing_extensions import TypedDict
 
+from writing_agent.agents.metrics import summarize_agent_metrics
 from writing_agent.checkpoints import get_checkpointer, update_thread_metadata
 from writing_agent.config import Settings, get_settings
 from writing_agent.graph.multi_agent_nodes import (
@@ -50,6 +51,7 @@ class MultiAgentGraphState(TypedDict, total=False):
     max_rounds: int
     output_path: str
     output_paths: dict[str, str]
+    agent_metrics: dict[str, object]
     output_format: str
     output_dir: str
     docx_template: str
@@ -138,12 +140,23 @@ def _state_from_result(
     config: dict[str, object],
     result: dict[str, object],
 ) -> MultiAgentGraphState:
+    def _interrupt_step(interrupts: object) -> str:
+        values = interrupts if isinstance(interrupts, (list, tuple)) else [interrupts]
+        for item in values:
+            value = getattr(item, "value", item)
+            if isinstance(value, dict) and value.get("step"):
+                return str(value["step"])
+        return ""
+
     try:
         snapshot = app.get_state(config)  # type: ignore[attr-defined]
         state = dict(snapshot.values)
         if snapshot.interrupts:
             state["__interrupt__"] = result.get("__interrupt__", snapshot.interrupts)
             state["awaiting_human_review"] = True
+            state["current_step"] = state.get("current_step") or _interrupt_step(
+                state["__interrupt__"]
+            )
         return state  # type: ignore[return-value]
     except Exception:
         return result  # type: ignore[return-value]
@@ -182,6 +195,9 @@ def run_multi_agent_workflow(
         result["output_path"] = str(Path(result["output_path"]))
         result.setdefault("current_step", "multi_agent_export")
     result["thread_id"] = resolved_thread_id
+    result["agent_metrics"] = summarize_agent_metrics(resolved_thread_id, result).model_dump(
+        mode="json"
+    )
     update_thread_metadata(
         resolved_thread_id,
         result,
@@ -214,6 +230,7 @@ def resume_multi_agent_workflow(
         result["output_path"] = str(Path(result["output_path"]))
         result.setdefault("current_step", "multi_agent_export")
     result["thread_id"] = thread_id
+    result["agent_metrics"] = summarize_agent_metrics(thread_id, result).model_dump(mode="json")
     interrupted = bool(result.get("__interrupt__"))
     update_thread_metadata(thread_id, result, interrupted=interrupted, settings=resolved_settings)
     return result

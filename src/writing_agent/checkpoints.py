@@ -85,6 +85,7 @@ def summarize_state(thread_id: str, state: dict[str, Any], interrupted: bool) ->
         "agent_results": _json_safe(state.get("agent_results", [])),
         "supervisor_decisions": _json_safe(state.get("supervisor_decisions", [])),
         "evaluation_result": _json_safe(state.get("evaluation_result", {})),
+        "agent_metrics": _json_safe(state.get("agent_metrics", {})),
     }
 
 

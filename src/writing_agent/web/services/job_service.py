@@ -368,6 +368,15 @@ def resume_job(
             for item in result.get("supervisor_decisions", [])
         ]
         job.evaluation_result = dict(result.get("evaluation_result", {}) or {})
+        for agent_result in job.agent_results:
+            add_job_event(
+                job,
+                "agent_finished",
+                message=str(agent_result.get("status", "")),
+                step=str(agent_result.get("agent_name", "")),
+                settings=resolved_settings,
+                payload={"agent_result": agent_result},
+            )
         add_job_event(
             job,
             "interrupted" if job.status == "interrupted" else "completed",
