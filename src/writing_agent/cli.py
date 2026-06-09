@@ -28,6 +28,7 @@ from writing_agent.evaluation.compare import (
 )
 from writing_agent.evaluation.evaluator import evaluate_markdown
 from writing_agent.evaluation.llm_judge import judge_document_with_llm
+from writing_agent.evaluation.model_benchmark import run_model_benchmark
 from writing_agent.graph.multi_agent_workflow import (
     resume_multi_agent_workflow,
     run_multi_agent_workflow,
@@ -1088,6 +1089,71 @@ def baseline_compare(
             console.print(f"[green]improvement[/green] {improvement}")
     if fail_on_regression and result.status == "fail":
         raise typer.Exit(code=1)
+
+
+@app.command("model-benchmark")
+def model_benchmark(
+    tasks: Annotated[
+        Path,
+        typer.Option("--tasks", exists=True, file_okay=True, dir_okay=False),
+    ],
+    models: Annotated[str, typer.Option("--models", help="Comma-separated model names.")],
+    embedding_models: Annotated[
+        str,
+        typer.Option("--embedding-models", help="Comma-separated embedding model names."),
+    ],
+    rag_modes: Annotated[
+        str,
+        typer.Option("--rag-modes", help="Comma-separated rag modes."),
+    ] = "hybrid",
+    mode: Annotated[str, typer.Option("--mode", help="single or multi.")] = "multi",
+    max_agent_rounds: Annotated[int, typer.Option("--max-agent-rounds")] = 2,
+    output_dir: Annotated[
+        Path,
+        typer.Option("--output-dir", help="Benchmark output directory."),
+    ] = Path("outputs/model_benchmark"),
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Only list combinations; do not run generation."),
+    ] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="Print JSON output.")] = False,
+    fail_fast: Annotated[
+        bool,
+        typer.Option("--fail-fast/--no-fail-fast", help="Stop after the first failed combo."),
+    ] = False,
+) -> None:
+    """Benchmark model and RAG combinations using baseline tasks."""
+
+    result = run_model_benchmark(
+        tasks=tasks,
+        models=models,
+        embedding_models=embedding_models,
+        rag_modes=rag_modes,
+        mode=mode,
+        max_agent_rounds=max_agent_rounds,
+        output_dir=output_dir,
+        dry_run=dry_run,
+        fail_fast=fail_fast,
+        settings=get_settings(),
+    )
+    if json_output:
+        console.print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+    table = Table(title="Model Benchmark")
+    table.add_column("metric")
+    table.add_column("value")
+    table.add_row("dry_run", str(result.get("dry_run", False)))
+    table.add_row("total_combinations", str(result.get("total_combinations", 0)))
+    table.add_row("success_count", str(result.get("success_count", 0)))
+    table.add_row("failed_count", str(result.get("failed_count", 0)))
+    if result.get("benchmark_report"):
+        table.add_row("benchmark_report", str(result["benchmark_report"]))
+    if result.get("benchmark_summary"):
+        table.add_row("benchmark_summary", str(result["benchmark_summary"]))
+    console.print(table)
+    if dry_run:
+        for combo in result.get("combinations", []):
+            console.print(combo)
 
 
 @app.command("batch-rerun-failed")
